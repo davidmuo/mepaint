@@ -1097,11 +1097,11 @@ export default function App() {
 
   const toCanvas=useCallback((clientX:number,clientY:number)=>{
     const canvas=canvasRef.current;if(!canvas) return{x:0,y:0};
-    // Use the canvas element's own bounding rect — correctly accounts for
-    // pan, zoom, flip transforms, AND the drag-handle bar offset above the canvas.
-    const rect=canvas.getBoundingClientRect();const vp=vpRef.current;
-    // Dividing by zoom converts screen pixels → canvas CSS pixels.
-    let x=(clientX-rect.left)/vp.zoom,y=(clientY-rect.top)/vp.zoom;
+    const rect=canvas.getBoundingClientRect();
+    // Derive scale from DOM directly — avoids stale vpRef.zoom on HiDPI screens.
+    const scaleX=rect.width/canvas.offsetWidth||1;
+    const scaleY=rect.height/canvas.offsetHeight||1;
+    let x=(clientX-rect.left)/scaleX,y=(clientY-rect.top)/scaleY;
     if(flipHRef.current)x=canvas.offsetWidth-x;
     if(flipVRef.current)y=canvas.offsetHeight-y;
     return{x,y};
@@ -1170,8 +1170,11 @@ export default function App() {
     const img=new Image();
     img.onload=()=>{
       const ctx=canvas.getContext('2d')!;
+      ctx.setTransform(1,0,0,1,0,0);
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
       const d=ctx.getImageData(0,0,canvas.width,canvas.height);
+      const ratio=window.devicePixelRatio||1;
+      ctx.setTransform(ratio,0,0,ratio,0,0);
       // Load into background layer only
       const bg=layersRef.current[0];
       if(bg?.buf){bg.buf.set(d.data);}
