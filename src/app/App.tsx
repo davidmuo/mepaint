@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import JSZip from 'jszip';
 import { pigmentMix, smudgeMix } from './components/pigment-mix';
+import { CREAM, WHITE, DARK, LIME, PINK, ACCENT, MUTED, SAND, BORDER, BR, SHADOW, SHADOW_SM } from './components/tokens';
+import { Tour, type TourStep } from './components/Tour';
+import { ColorPicker } from './components/ColorPicker';
+import { MixDemo, MIX_COLORS } from './components/MixDemo';
+import { Toaster, toast } from 'sonner';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import {
-  Music2, ImageIcon, HelpCircle, Undo2, Trash2, Download,
+  Music2, ImageIcon, HelpCircle, Undo2, Redo2, Trash2, Download, Compass,
   Play, Pause, X, Upload, Blend,
   ChevronRight, Eye, EyeOff, ZoomIn, ZoomOut, Users,
   Pipette, Spline, Copy, Check, Link, Settings2, LayoutGrid,
@@ -49,17 +54,6 @@ interface CustomBrush { id: string; name: string; mask: Float32Array; spacing: n
 interface Layer { id: string; name: string; opacity: number; visible: boolean; locked: boolean; blendMode: string; buf: Uint8ClampedArray | null }
 interface UndoSnapshot { bufs: (Uint8ClampedArray|null)[]; meta: {id:string;name:string;opacity:number;visible:boolean;locked:boolean;blendMode:string}[]; activeIdx: number }
 
-// ─── Design System — Editorial Bold (inspired by clean NFT marketplace UI) ────
-const CREAM   = '#EDE8DA';  // Warm cream canvas background
-const WHITE   = '#FFFFFF';  // Pure white for panels
-const DARK    = '#0D0B07';  // Warm near-black (text, borders)
-const LIME    = '#C4FF45';  // Neon lime — primary accent
-const PINK    = '#FF6EB0';  // Hot pink — danger
-const ACCENT  = '#3A51D8';  // Blue — links, info
-const MUTED   = '#80796A';  // Warm muted text
-const SAND    = '#E2DACA';  // Subtle dividers / secondary bg
-const BORDER  = `2px solid ${DARK}`;
-const BR      = '9px';
 
 // ─── Surface definitions ──────────────────────────────────────────────────────
 const SURFACE_W = 256, SURFACE_H = 256;
@@ -183,6 +177,7 @@ const CANVAS_PRESETS = [
   { label:'1080p',   w:1920, h:1080 },{ label:'Portrait',w:720,  h:1280 },
   { label:'A4 Land', w:1123, h:794  },{ label:'Twitter', w:1200, h:628  },
 ];
+const TOUR_KEY = 'mepaint-tour-v1';
 
 
 // ─── Brush SVG Icons ──────────────────────────────────────────────────────────
@@ -216,6 +211,11 @@ function SurfaceIcon({type,size=13}:{type:SurfaceType;size?:number}){
     case 'newsprint': return(<svg viewBox="0 0 14 14" style={s} fill="none" stroke="currentColor" strokeWidth="1.1"><line x1="1" y1="2" x2="13" y2="2"/><line x1="1" y1="4.5" x2="9" y2="4.5"/><line x1="1" y1="7" x2="13" y2="7"/><line x1="1" y1="9.5" x2="11" y2="9.5"/></svg>);
     case 'toned':     return(<svg viewBox="0 0 14 14" style={s} fill="currentColor" opacity=".5"><rect x="1" y="1" width="12" height="12" rx="2"/></svg>);
   }
+}
+
+// ─── Sidebar tooltip — label + shortcut keycap, slides out to the right ─────────
+function Tip({label,kbd,children}:{label:string;kbd?:string;children:React.ReactNode}){
+  return(<div className="tipw">{children}<div className="tip" role="tooltip">{label}{kbd&&<kbd>{kbd}</kbd>}</div></div>);
 }
 
 // ─── Clipboard fallback ────────────────────────────────────────────────────────
@@ -294,6 +294,8 @@ export default function App() {
     isDrawing:false, isPanning:false, isSpaceHeld:false,
     lastX:0, lastY:0, panStartX:0, panStartY:0, panStartPX:0, panStartPY:0,
     smudgeColor:null as number[]|null, pressure:1.0,
+    // Stabilizer: smoothed brush position trails the raw pointer (rawX/rawY)
+    sx:0, sy:0, rawX:0, rawY:0,
   });
   // Collab
   const myUid   = useRef((() => { let id=sessionStorage.getItem('mepaint-uid'); if(!id){id=crypto.randomUUID();sessionStorage.setItem('mepaint-uid',id);} return id; })());
@@ -312,6 +314,7 @@ export default function App() {
   const imgImportRef       = useRef<HTMLInputElement>(null);
   const thumbTimerRef      = useRef<ReturnType<typeof setTimeout>|null>(null);
   const undoSnapshots      = useRef<UndoSnapshot[]>([]);
+  const redoSnapshots      = useRef<UndoSnapshot[]>([]);
   const maxUndo            = 14;
   // ── Stable refs so pointer listeners never re-register mid-stroke
   const activePointerIdRef = useRef<number|null>(null);
@@ -474,6 +477,23 @@ export default function App() {
   const [mobileToolExpanded, setMobileToolExpanded] = useState(false);
   useEffect(()=>{const h=()=>{const m=window.innerWidth<768;setIsMobile(m);if(!m)setMobileDrawer(false);};window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h);},[]);
 
+  // ── Onboarding tour (first visit only; replayable from Shortcuts)
+  const [tourOpen, setTourOpen] = useState(false);
+  const tourSeen = ()=>{try{return localStorage.getItem(TOUR_KEY)==='done';}catch{return true;}};
+  const closeTour = useCallback(()=>{setTourOpen(false);try{localStorage.setItem(TOUR_KEY,'done');}catch{}},[]);
+  // ── Stabilizer (0 = raw input) and right-click pop-up palette — both Krita staples
+  const [stabilizer, setStabilizer] = useState(()=>{try{return Math.max(0,Math.min(100,+(localStorage.getItem('mepaint-stabilizer')??'0')||0));}catch{return 0;}});
+  const stabilizerRef = useRef(stabilizer);
+  useEffect(()=>{stabilizerRef.current=stabilizer;try{localStorage.setItem('mepaint-stabilizer',String(stabilizer));}catch{}},[stabilizer]);
+  const [popPal, setPopPal] = useState<{x:number;y:number}|null>(null);
+  // ── Transient brush-size preview while resizing
+  const [sizeHud, setSizeHud] = useState(false);
+  const sizeHudMounted = useRef(false);
+  useEffect(()=>{if(!sizeHudMounted.current){sizeHudMounted.current=true;return;}setSizeHud(true);const t=setTimeout(()=>setSizeHud(false),650);return()=>clearTimeout(t);},[brushSize]);
+  // ── History depth, mirrored into state so undo/redo buttons can dim
+  const [hist, setHist] = useState({undo:0,redo:0});
+  const syncHist = useCallback(()=>setHist({undo:undoSnapshots.current.length,redo:redoSnapshots.current.length}),[]);
+
   const currentSurface = SURFACES.find(s=>s.type===surface)!;
   const [h,s,l]=hsl;
   const colorCss=`rgb(${color.join(',')})`;
@@ -527,7 +547,7 @@ export default function App() {
   // ── Color helpers
   const pushRecent=useCallback((rgb:[number,number,number])=>setRecentColors(p=>{const f=p.filter(c=>!(c[0]===rgb[0]&&c[1]===rgb[1]&&c[2]===rgb[2]));return[rgb,...f].slice(0,10);}),[]);
   const applyColor=useCallback((rgb:[number,number,number])=>{setColor(rgb);setHsl(rgbToHsl(rgb[0],rgb[1],rgb[2]));setActivePig(-1);pushRecent(rgb);},[pushRecent]);
-  const setFromHsl=useCallback((h:number,s:number,l:number)=>{const rgb=hslToRgb(h,s,l);setColor(rgb);setHsl([h,s,l]);setActivePig(-1);},[]);
+  const setColorLive=useCallback((rgb:[number,number,number])=>{setColor(rgb);setHsl(rgbToHsl(rgb[0],rgb[1],rgb[2]));setActivePig(-1);},[]);
 
   // ── Name save (works for BOTH guests and signed-in users)
   const saveDisplayName=useCallback(()=>{
@@ -677,6 +697,7 @@ export default function App() {
       // Persist metadata (not the Float32Array since localStorage is limited)
       try{localStorage.setItem('mepaint-custom-brushes-v1',JSON.stringify(next.map(b=>({id:b.id,name:b.name,spacing:b.spacing,source:b.source}))));}catch{}
       setBrushLibTab('imported');
+      toast.success(`Imported ${imported.length} brush${imported.length===1?'':'es'}`,{description:file.name});
     }catch(err){setBrushImportError(String(err).replace('Error:','').trim());}
     finally{setBrushImportLoading(false);}
   },[parseProcreate,parseAbr]);
@@ -734,6 +755,12 @@ export default function App() {
     const canW=cnv.offsetWidth,canH=cnv.offsetHeight;
     setPan({x:(cw-canW*zoom_)/2,y:(ch-canH*zoom_)/2});
   },[]);
+  // ── Fit whole canvas panel (incl. drag bar) into the workspace, never upscaling past 100%
+  const fitCanvas=useCallback(()=>{
+    const con=containerRef.current,cnv=canvasRef.current;if(!con||!cnv) return;
+    const z=Math.min(1,(con.offsetWidth-56)/cnv.offsetWidth,(con.offsetHeight-56)/(cnv.offsetHeight+24));
+    const nz=Math.max(.1,z);setZoom(nz);centerCanvas(nz);
+  },[centerCanvas]);
 
   // ── Canvas init — creates background layer
   const initCanvasBuffer=useCallback((canvas:HTMLCanvasElement,W:number,H:number)=>{
@@ -744,7 +771,7 @@ export default function App() {
     layersRef.current=[bg];activeLayerIdxRef.current=0;
     _setLayersUI([bg]);_setActiveIdxUI(0);
     pixelBufRef.current=buf;
-    undoSnapshots.current=[];
+    undoSnapshots.current=[];redoSnapshots.current=[];setHist({undo:0,redo:0});
     const ctx=canvas.getContext('2d')!;ctx.putImageData(new ImageData(buf,canvas.width,canvas.height),0,0);
     setCanvasW(W);setCanvasH(H);
   },[]);
@@ -759,8 +786,8 @@ export default function App() {
     ctx.setTransform(ratio,0,0,ratio,0,0);
     initCanvasBuffer(canvas,W,H);
     canvasInitDone.current=true;
-    requestAnimationFrame(()=>centerCanvas(1));
-  },[initCanvasBuffer,centerCanvas]);
+    requestAnimationFrame(fitCanvas);
+  },[initCanvasBuffer,fitCanvas]);
 
   useEffect(()=>{
     // Only re-center on window resize; canvas init is deferred until user picks a size
@@ -789,17 +816,19 @@ export default function App() {
     layersRef.current=[bg];activeLayerIdxRef.current=0;
     _setLayersUI([bg]);_setActiveIdxUI(0);
     pixelBufRef.current=newBuf;
-    undoSnapshots.current=[];
+    undoSnapshots.current=[];redoSnapshots.current=[];setHist({undo:0,redo:0});
     setCanvasW(csW);setCanvasH(csH);setShowCanvasSize(false);
     setZoom(1);requestAnimationFrame(()=>centerCanvas(1));
   },[csW,csH,csMode,centerCanvas]);
 
   // ── Startup size confirm
+  const maybeStartTour=useCallback(()=>{if(!tourSeen())setTimeout(()=>setTourOpen(true),420);},[]);
   const confirmStartupSize=useCallback(()=>{
     setCsW(spW);setCsH(spH);
     setShowStartupPicker(false);
     setTimeout(()=>initWithSize(spW,spH),60);
-  },[spW,spH,initWithSize]);
+    maybeStartTour();
+  },[spW,spH,initWithSize,maybeStartTour]);
 
   // ── Room from URL
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const rid=p.get('room');if(rid){setRoomId(rid);isHost.current=false;}},[]);
@@ -1126,27 +1155,41 @@ export default function App() {
     window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
   },[]);
 
+  const captureSnapshot=useCallback(():UndoSnapshot=>({
+    bufs:layersRef.current.map(l=>l.buf?new Uint8ClampedArray(l.buf):null),
+    meta:layersRef.current.map(({id,name,opacity,visible,locked,blendMode})=>({id,name,opacity,visible,locked,blendMode:blendMode||'normal'})),
+    activeIdx:activeLayerIdxRef.current,
+  }),[]);
   const saveUndo=useCallback(()=>{
-    const snap:UndoSnapshot={
-      bufs:layersRef.current.map(l=>l.buf?new Uint8ClampedArray(l.buf):null),
-      meta:layersRef.current.map(({id,name,opacity,visible,locked,blendMode})=>({id,name,opacity,visible,locked,blendMode:blendMode||'normal'})),
-      activeIdx:activeLayerIdxRef.current,
-    };
-    undoSnapshots.current.push(snap);
+    undoSnapshots.current.push(captureSnapshot());
     if(undoSnapshots.current.length>maxUndo)undoSnapshots.current.shift();
-  },[]);
-  const handleUndo=useCallback(()=>{
-    if(!undoSnapshots.current.length||!canvasRef.current) return;
-    const snap=undoSnapshots.current.pop()!;
+    // Any new edit forks history — the redo branch is gone
+    redoSnapshots.current=[];
+    syncHist();
+  },[captureSnapshot,syncHist]);
+  const restoreSnapshot=useCallback((snap:UndoSnapshot)=>{
     const restored:Layer[]=snap.meta.map((m,i)=>({...m,buf:snap.bufs[i]}));
     layersRef.current=restored;
     activeLayerIdxRef.current=snap.activeIdx;
     pixelBufRef.current=restored[snap.activeIdx]?.buf??null;
     _setLayersUI(restored);_setActiveIdxUI(snap.activeIdx);
-    const canvas=canvasRef.current;
+    const canvas=canvasRef.current!;
     dirtyRef.current={x1:0,y1:0,x2:canvas.width,y2:canvas.height};
+    isDirtyRef.current=true;
     scheduleFlush();
   },[scheduleFlush]);
+  const handleUndo=useCallback(()=>{
+    if(!undoSnapshots.current.length||!canvasRef.current) return;
+    redoSnapshots.current.push(captureSnapshot());
+    restoreSnapshot(undoSnapshots.current.pop()!);
+    syncHist();
+  },[captureSnapshot,restoreSnapshot,syncHist]);
+  const handleRedo=useCallback(()=>{
+    if(!redoSnapshots.current.length||!canvasRef.current) return;
+    undoSnapshots.current.push(captureSnapshot());
+    restoreSnapshot(redoSnapshots.current.pop()!);
+    syncHist();
+  },[captureSnapshot,restoreSnapshot,syncHist]);
   const handleClear=useCallback(()=>{
     if(!clearConfirm){setClearConfirm(true);setTimeout(()=>setClearConfirm(false),3000);return;}
     saveUndo();const canvas=canvasRef.current;if(!canvas||!pixelBufRef.current) return;
@@ -1163,8 +1206,9 @@ export default function App() {
     setClearConfirm(false);isDirtyRef.current=true;
     dirtyRef.current={x1:0,y1:0,x2:canvas.width,y2:canvas.height};
     scheduleFlush();
-  },[clearConfirm,saveUndo,scheduleFlush]);
-  const handleSave=useCallback(()=>{const canvas=canvasRef.current;if(!canvas) return;const a=document.createElement('a');a.download=`mepaint-${Date.now()}.png`;a.href=canvas.toDataURL('image/png');a.click();},[]);
+    toast(`${layersRef.current[activeLayerIdxRef.current]?.name??'Layer'} cleared`,{action:{label:'Undo',onClick:handleUndo}});
+  },[clearConfirm,saveUndo,scheduleFlush,handleUndo]);
+  const handleSave=useCallback(()=>{const canvas=canvasRef.current;if(!canvas) return;const a=document.createElement('a');a.download=`mepaint-${Date.now()}.png`;a.href=canvas.toDataURL('image/png');a.click();toast.success('PNG exported',{description:`${canvas.offsetWidth} × ${canvas.offsetHeight} px · check your downloads`});},[]);
   const loadCanvasFromUrl=useCallback((dataUrl:string,cb?:()=>void)=>{
     const canvas=canvasRef.current;if(!canvas) return;
     const img=new Image();
@@ -1383,6 +1427,7 @@ export default function App() {
       const blob=new Blob(chunks,{type:mimeType});const url=URL.createObjectURL(blob);
       const a=document.createElement('a');a.download='mepaint-animation.webm';a.href=url;a.click();URL.revokeObjectURL(url);
       setIsRecording(false);
+      toast.success('Animation exported',{description:`${animFramesRef.current.length} frames · ${animFpsRef.current} fps · WebM`});
     };
     recorder.start();
     const msPerFrame=Math.max(100,1000/animFpsRef.current);
@@ -1393,9 +1438,21 @@ export default function App() {
   },[saveCurrentAnimFrame]);
 
   // ── Gallery
-  const saveToGallery=useCallback((name?:string)=>{const canvas=canvasRef.current;if(!canvas) return;canvas.toBlob(blob=>{if(!blob) return;const reader=new FileReader();reader.onload=e=>{const dataUrl=e.target?.result as string;const entry:GalleryEntry={id:crypto.randomUUID(),name:name||`Painting — ${new Date().toLocaleDateString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}`,dataUrl,createdAt:Date.now(),isAuto:false};setGallery(prev=>{const next=[entry,...prev].slice(0,24);persistGallery(next);return next;});isDirtyRef.current=false;};reader.readAsDataURL(blob);},'image/jpeg',.72);},[]);
+  const saveToGallery=useCallback((name?:string)=>{const canvas=canvasRef.current;if(!canvas) return;canvas.toBlob(blob=>{if(!blob) return;const reader=new FileReader();reader.onload=e=>{const dataUrl=e.target?.result as string;const entry:GalleryEntry={id:crypto.randomUUID(),name:name||`Painting — ${new Date().toLocaleDateString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}`,dataUrl,createdAt:Date.now(),isAuto:false};setGallery(prev=>{const next=[entry,...prev].slice(0,24);persistGallery(next);return next;});isDirtyRef.current=false;toast.success('Saved to gallery',{description:entry.name,action:{label:'View',onClick:()=>setShowGallery(true)}});};reader.readAsDataURL(blob);},'image/jpeg',.72);},[]);
   const deleteFromGallery=useCallback((id:string)=>setGallery(prev=>{const next=prev.filter(e=>e.id!==id);persistGallery(next);return next;}),[]);
   const loadFromGallery=useCallback((dataUrl:string)=>{saveUndo();loadCanvasFromUrl(dataUrl);setShowGallery(false);},[saveUndo,loadCanvasFromUrl]);
+  // ── Resume a gallery piece straight from the startup screen, at its original size
+  const resumeFromGallery=useCallback((entry:GalleryEntry)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const ratio=window.devicePixelRatio||1;
+      const W=Math.round(img.width/ratio),H=Math.round(img.height/ratio);
+      setCsW(W);setCsH(H);setShowStartupPicker(false);
+      setTimeout(()=>{initWithSize(W,H);loadCanvasFromUrl(entry.dataUrl);},60);
+      maybeStartTour();
+    };
+    img.src=entry.dataUrl;
+  },[initWithSize,loadCanvasFromUrl,maybeStartTour]);
   useEffect(()=>{autoGalleryRef.current=setInterval(()=>{if(!isDirtyRef.current) return;const canvas=canvasRef.current;if(!canvas) return;canvas.toBlob(blob=>{if(!blob) return;const reader=new FileReader();reader.onload=e=>{const dataUrl=e.target?.result as string;const entry:GalleryEntry={id:`auto-${Date.now()}`,name:`Auto — ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`,dataUrl,createdAt:Date.now(),isAuto:true};setGallery(prev=>{const manuals=prev.filter(e=>!e.isAuto),autos=prev.filter(e=>e.isAuto).slice(0,2);const next=[entry,...manuals,...autos].slice(0,24);persistGallery(next);return next;});isDirtyRef.current=false;};reader.readAsDataURL(blob);},'image/jpeg',.45);},5*60*1000);return()=>{if(autoGalleryRef.current)clearInterval(autoGalleryRef.current);};},[]);
 
   const sampleColor=useCallback((cx:number,cy:number)=>{const canvas=canvasRef.current;if(!canvas) return;const{x,y}=toCanvas(cx,cy);const ratio=window.devicePixelRatio||1;const px=Math.floor(x*ratio),py=Math.floor(y*ratio);if(px<0||py<0||px>=canvas.width||py>=canvas.height) return;const d=canvas.getContext('2d')!.getImageData(px,py,1,1).data;applyColor([d[0],d[1],d[2]]);setIsEyedropper(false);},[toCanvas,applyColor]);
@@ -1623,7 +1680,7 @@ export default function App() {
     const url=new URL(window.location.href);
     url.searchParams.set('room',roomId!);
     const text=url.toString();
-    const fin=()=>{setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
+    const fin=()=>{setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);toast.success('Invite link copied',{description:'Anyone with the link can paint with you'});};
     if(navigator.clipboard?.writeText){
       navigator.clipboard.writeText(text).then(fin).catch(()=>fallbackCopy(text,fin));
     } else {
@@ -1691,7 +1748,11 @@ export default function App() {
         const rawP=e.pointerType==='mouse'?1.0:e.pressure>0?Math.max(0.01,e.pressure):d.pressure;
         d.pressure=d.pressure*0.5+rawP*0.5;
         const ts=toolStateRef.current;
-        const{x,y}=toCanvasRef.current(e.clientX,e.clientY);
+        let{x,y}=toCanvasRef.current(e.clientX,e.clientY);
+        d.rawX=x;d.rawY=y;
+        // Stabilizer: the brush trails the pointer with an exponential ease, ironing out hand jitter
+        const st=stabilizerRef.current;
+        if(st>0){const a=1-st/100*.92;d.sx+=(x-d.sx)*a;d.sy+=(y-d.sy)*a;x=d.sx;y=d.sy;}
         const settings:StampSettings={brushType:ts.brushType,brushSize:ts.brushSize,color:ts.color,opacity:ts.opacity};
         interpolateRef.current(d.lastX,d.lastY,x,y,settings);
         broadcastStrokeRef.current(d.lastX,d.lastY,x,y,settings);
@@ -1713,9 +1774,17 @@ export default function App() {
         if(wasSelecting) commitTxSelRef.current();
         return;
       }
+      // Stabilizer "finish line": close the gap between the lagging brush and where the pen lifted
+      const d=ds.current;
+      if(d.isDrawing&&stabilizerRef.current>0&&Math.hypot(d.rawX-d.lastX,d.rawY-d.lastY)>.5){
+        const ts=toolStateRef.current;
+        const settings:StampSettings={brushType:ts.brushType,brushSize:ts.brushSize,color:ts.color,opacity:ts.opacity};
+        interpolateRef.current(d.lastX,d.lastY,d.rawX,d.rawY,settings);
+        broadcastStrokeRef.current(d.lastX,d.lastY,d.rawX,d.rawY,settings);
+      }
       ds.current.isDrawing=false;ds.current.smudgeColor=null;ds.current.isPanning=false;ds.current.pressure=1.0;refResizeRef.current=null;
     };
-    const onKey=(e:KeyboardEvent)=>{if(e.code==='Space'&&!ds.current.isSpaceHeld){ds.current.isSpaceHeld=true;const cd=cursorDivRef.current;if(cd)cd.style.opacity='0';}};
+    const onKey=(e:KeyboardEvent)=>{const tg=(e.target as HTMLElement).tagName;if(tg==='INPUT'||tg==='TEXTAREA') return;if(e.code==='Space'&&!ds.current.isSpaceHeld){ds.current.isSpaceHeld=true;const cd=cursorDivRef.current;if(cd)cd.style.opacity='0';}};
     const onKeyUp=(e:KeyboardEvent)=>{if(e.code==='Space'){ds.current.isSpaceHeld=false;const cd=cursorDivRef.current;if(cd)cd.style.opacity='1';}};
     document.addEventListener('pointermove',onMove);
     document.addEventListener('pointerup',endStroke);
@@ -1736,26 +1805,28 @@ export default function App() {
     const onKey=(e:KeyboardEvent)=>{
       const tag=(e.target as HTMLElement).tagName;if(tag==='INPUT'||tag==='TEXTAREA') return;
       if(e.altKey&&e.code==='KeyE'){setIsEyedropper(p=>!p);return;}
-      if(e.ctrlKey||e.metaKey){if(e.key==='z'){e.preventDefault();handleUndo();}else if(e.key==='s'){e.preventDefault();handleSave();}return;}
+      if(e.ctrlKey||e.metaKey){const k=e.key.toLowerCase();if(k==='z'){e.preventDefault();if(e.shiftKey)handleRedo();else handleUndo();}else if(k==='y'){e.preventDefault();handleRedo();}else if(k==='s'){e.preventDefault();handleSave();}return;}
       switch(e.key){
         case '1':setBrushType('soft-round');break;case '2':setBrushType('flat');break;case '3':setBrushType('bristle');break;
         case '4':setBrushType('watercolor');break;case '5':setBrushType('thick-paint');break;case '6':case 'e':setEraserMode(p=>!p);break;
         case 's':setSmudgeMode(p=>!p);break;case '[':setBrushSize(p=>Math.max(2,p-5));break;case ']':setBrushSize(p=>Math.min(150,p+5));break;
         case 'f':case 'F':setFlipH(p=>!p);break;case 'V':setFlipV(p=>!p);break;
         case 'g':case 'G':setShowGallery(p=>!p);break;case 'c':setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);break;case '?':setShowHelp(p=>!p);break;
-        case 'Escape':setShowHelp(false);setIsEyedropper(false);setShowGallery(false);setShowBrushAdv(false);setShowSurface(false);setShowProfile(false);setShowCanvasSize(false);setShowLayerPanel(false);setShowBrushLib(false);setShowInvite(false);setShowColorPanel(false);if(isTransformRef.current)cancelTransformRef.current();if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
+        case 'Escape':setPopPal(null);setShowHelp(false);setIsEyedropper(false);setShowGallery(false);setShowBrushAdv(false);setShowSurface(false);setShowProfile(false);setShowCanvasSize(false);setShowLayerPanel(false);setShowBrushLib(false);setShowInvite(false);setShowColorPanel(false);if(isTransformRef.current)cancelTransformRef.current();if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
         case 't':case 'T':if(!isTransformRef.current){if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;}else{cancelTransformRef.current();}break;
         case 'l':case 'L':if(!isLassoRef.current){if(isTransformRef.current)cancelTransformRef.current();setIsLassoMode(true);isLassoRef.current=true;setLassoPath([]);lassoPathRef.current=[];setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}else{setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
         case '=':case '+':zoomAt(window.innerWidth/2,window.innerHeight/2,1.25);break;
-        case '-':zoomAt(window.innerWidth/2,window.innerHeight/2,.8);break;case '0':resetZoom();break;
+        case '-':zoomAt(window.innerWidth/2,window.innerHeight/2,.8);break;case '0':fitCanvas();break;
       }
     };
     document.addEventListener('keydown',onKey);return()=>document.removeEventListener('keydown',onKey);
-  },[handleUndo,handleSave,zoomAt,resetZoom]);
+  },[handleUndo,handleRedo,handleSave,zoomAt,fitCanvas]);
 
   const handleCanvasDown=useCallback((e:React.PointerEvent<HTMLCanvasElement>)=>{
     e.preventDefault();
-    setShowSurface(false);setShowBrushAdv(false);setShowProfile(false);
+    // Right button is reserved for the pop-up palette (onContextMenu)
+    if(e.button===2) return;
+    setShowSurface(false);setShowBrushAdv(false);setShowProfile(false);setPopPal(null);
     if(animPlaying) return;
     // ── Transform: select phase — start marquee (guard against mouse-emulation re-entry)
     if(isTransformRef.current){
@@ -1782,7 +1853,8 @@ export default function App() {
     const{x,y}=toCanvas(e.clientX,e.clientY);
     if(smudgeMode&&pixelBufRef.current&&canvasRef.current){const ratio=window.devicePixelRatio||1,W=canvasRef.current.width;const px=Math.floor(x*ratio),py=Math.floor(y*ratio),i=(py*W+px)*4,b=pixelBufRef.current;ds.current.smudgeColor=[b[i],b[i+1],b[i+2]];}
     activePointerIdRef.current=e.pointerId;
-    ds.current.isDrawing=true;ds.current.lastX=x;ds.current.lastY=y;saveUndo();
+    ds.current.isDrawing=true;ds.current.lastX=x;ds.current.lastY=y;
+    ds.current.sx=ds.current.rawX=x;ds.current.sy=ds.current.rawY=y;saveUndo();
     const adv=brushAdvancedRef.current[brushType];const pressure=ds.current.pressure;
     const pc=Math.pow(Math.max(0,Math.min(1,pressure)),0.55);
     const sJ=1+(Math.random()-.5)*(adv?.sizeJitter??0)*.02,oJ=1+(Math.random()-.5)*(adv?.opacityJitter??0)*.02;
@@ -1798,6 +1870,33 @@ export default function App() {
   const loadVideo=useCallback(()=>{const val=ytInputRef.current?.value??ytUrl;const id=extractYouTubeId(val);if(id){setVideoId(id);setIsPlaying(true);setYtUrl('');if(ytInputRef.current)ytInputRef.current.value='';}},[ytUrl]);
   const togglePlay=useCallback(()=>{if(isPlaying){ytCtrl('pauseVideo');setIsPlaying(false);}else{ytCtrl('playVideo');setIsPlaying(true);}},[isPlaying,ytCtrl]);
   const handleRefUpload=useCallback((e:React.ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file) return;const reader=new FileReader();reader.onload=ev=>setRefImage(ev.target?.result as string);reader.readAsDataURL(file);},[]);
+
+  // ── Onboarding tour script — mobile swaps the sidebar stops for the menu drawer
+  const tourSteps:TourStep[]=[
+    {hero:<MixDemo size={150} stroke={WHITE}/>,chip:'WELCOME',title:'Paint that mixes like the real thing',
+      body:<>In mepaint, colours blend like real pigment: blue and yellow make <b>green</b>, not muddy grey. Here's a 60-second tour.</>},
+    {target:'canvas',title:'This is your canvas',
+      body:isMobile?'Paint with your finger or a stylus. Zoom with the buttons up top, and drag the dark bar to move the canvas.'
+        :'Paint with a mouse, pen or tablet. Stylus pressure is supported. Drag the dark bar to move it, and right-click anywhere on it for a quick palette.',
+      keys:isMobile?undefined:['Scroll · zoom','Space · pan','Right-click · palette']},
+    {target:['brushes','strokes'],placement:'top',title:'Brushes & strokes',
+      body:isMobile?'Quick-pick a brush, then set its size. The menu holds 13 more brushes plus eraser & smudge.'
+        :'Five favourite brushes, plus eraser, smudge and brush dynamics. Size and Flow shape each dab; Smooth stabilises your line for clean inking.',
+      keys:isMobile?undefined:['1–5','E','S','[ ]']},
+    {target:'color',placement:'top',title:'Mix your colours',
+      body:'Open the colour panel for a full picker, 14 classic pigments and your recent colours. Overlapping strokes blend like real paint.',
+      keys:isMobile?undefined:['C','Alt+E']},
+    ...(isMobile?[
+      {target:'menu',placement:'bottom' as const,title:'Everything else is in here',body:'Layers, transform & lasso, symmetry, paper textures, your gallery, live collaboration and more.'},
+    ]:[
+      {target:'tools',placement:'right' as const,title:'Your toolbox',body:'Transform, lasso, brush library, eyedropper, symmetry, canvas size and paper texture. Hover any tool to see its shortcut.',keys:['T','L']},
+      {target:'layers',placement:'right' as const,title:'Layers & blend modes',body:'Stack layers, set opacity and blend modes like Multiply or Overlay, and drop in photos as layers.'},
+      {target:'collab',placement:'right' as const,title:'Paint together, live',body:'Open a shared room and send the link. Everyone paints on the same canvas in real time, with chat.'},
+    ]),
+    {target:'workspace',placement:'bottom',title:'Bring it to life',body:'Switch to Animate for frame-by-frame drawing with onion skinning, then export your animation as a video.'},
+    {target:'save',placement:'top',title:'Keep your work',body:'Export a PNG or save to your gallery. mepaint also keeps an autosave every 5 minutes.',keys:isMobile?undefined:['Ctrl+S','G']},
+    {chip:'ALL SET',title:"You're ready to paint",body:<>Press <b>?</b> any time to see every shortcut. You can replay this tour from there too.</>},
+  ];
 
   // ── UI button helper — clean editorial style
   type BtnVariant = 'lime'|'dark'|'ghost'|'danger'|'default';
@@ -1832,9 +1931,30 @@ export default function App() {
         .inp::placeholder{color:${MUTED}}
         .mono{font-family:'Space Mono',monospace}
         .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:${BORDER};border-radius:100px;font-family:'Space Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.8px;flex-shrink:0}
-        .pop{background:${WHITE};border:${BORDER};border-radius:12px}
+        .pop{background:${WHITE};border:${BORDER};border-radius:12px;box-shadow:${SHADOW_SM}}
         .modal-bg{position:fixed;inset:0;background:rgba(13,11,7,.5);display:flex;align-items:center;justify-content:center;z-index:500;backdrop-filter:blur(4px)}
-        .modal{background:${WHITE};border:${BORDER};border-radius:16px;padding:28px 32px;width:480px;max-width:94vw;max-height:90vh;overflow-y:auto}
+        .modal{background:${WHITE};border:${BORDER};border-radius:16px;padding:28px 32px;width:480px;max-width:94vw;max-height:90vh;overflow-y:auto;box-shadow:${SHADOW}}
+        .lift{transition:transform 120ms cubic-bezier(.34,1.56,.64,1),box-shadow 120ms ease,background 120ms ease!important}
+        .lift:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:${SHADOW_SM}}
+        .lift:active:not(:disabled){transform:translate(1px,1px);box-shadow:none}
+        .tipw{position:relative;display:flex}
+        .tip{position:absolute;left:calc(100% + 12px);top:50%;transform:translate(-4px,-50%);opacity:0;pointer-events:none;white-space:nowrap;background:${DARK};color:${WHITE};font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;padding:5px 6px 5px 10px;border-radius:7px;display:flex;align-items:center;gap:8px;transition:opacity 120ms ease,transform 160ms cubic-bezier(.22,1,.36,1);z-index:400}
+        .tip::before{content:'';position:absolute;left:-4px;top:50%;width:8px;height:8px;background:${DARK};transform:translateY(-50%) rotate(45deg)}
+        .tip kbd{font-family:'Space Mono',monospace;font-size:9px;font-weight:700;background:${LIME};color:${DARK};border-radius:4px;padding:1px 5px}
+        .tip:not(:has(kbd)){padding-right:10px}
+        .tipw:hover .tip{opacity:1;transform:translate(0,-50%);transition-delay:180ms}
+        input[type=range].hue-rail{height:12px;border-radius:7px;border:2px solid ${DARK};background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
+        input[type=range].hue-rail::-webkit-slider-thumb{width:16px;height:16px;border-width:2.5px}
+        .toast-desc{color:rgba(255,255,255,.62)!important;font-weight:500;font-size:12px}
+        @keyframes tourIn{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
+        @keyframes tourPulse{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.08)}}
+        .tour-pulse{animation:tourPulse 1.6s cubic-bezier(.22,1,.36,1) infinite}
+        @keyframes palIn{from{opacity:0;transform:translate(-50%,-50%) scale(.6) rotate(-20deg)}to{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0)}}
+        @keyframes dotIn{from{opacity:0;transform:translate(-50%,-50%) scale(.3)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+        .pal-dot{position:absolute;transform:translate(-50%,-50%);animation:dotIn 240ms cubic-bezier(.34,1.56,.64,1) both;cursor:pointer;transition:transform 120ms cubic-bezier(.34,1.56,.64,1)}
+        .pal-dot:hover{transform:translate(-50%,-50%) scale(1.22)!important}
+        @keyframes hudIn{from{opacity:0;transform:translate(-50%,-50%) scale(.9)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+        @media (prefers-reduced-motion:reduce){.tour-pulse{animation:none}*{animation-duration:1ms!important}}
         .anim-thumb{border-radius:7px;cursor:pointer;position:relative;transition:transform 150ms;border:${BORDER};overflow:hidden;flex-shrink:0}
         .anim-thumb:hover{transform:translateY(-2px)}
         .anim-thumb.sel{border-color:${ACCENT};border-width:2px}
@@ -1859,7 +1979,7 @@ export default function App() {
         @keyframes slideRight{from{transform:translateX(-100%);opacity:0}to{transform:translateX(0);opacity:1}}
         @keyframes fadeIn2{from{opacity:0}to{opacity:1}}
         .mob-drawer-bg{position:fixed;inset:0;background:rgba(13,11,7,.4);z-index:500;animation:fadeIn2 120ms ease}
-        .mob-drawer{position:fixed;left:0;top:0;bottom:0;width:260px;background:${WHITE};border-right:${BORDER};z-index:510;animation:slideRight 200ms cubic-bezier(.4,.8,.6,1);overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:6}
+        .mob-drawer{position:fixed;left:0;top:0;bottom:0;width:260px;background:${WHITE};border-right:${BORDER};z-index:510;animation:slideRight 200ms cubic-bezier(.4,.8,.6,1);overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:6px}
         @media(max-width:767px){
           .ws-tab{padding:0 10px;height:30px;font-size:10px}
           .pill{padding:2px 7px;font-size:8px}
@@ -1967,44 +2087,46 @@ export default function App() {
             {icon:<Music2 size={15} strokeWidth={2}/>,active:showMusic,cb:()=>setShowMusic(p=>!p),tip:'Music'},
             {icon:<ImageIcon size={15} strokeWidth={2}/>,active:showRef,cb:()=>setShowRef(p=>!p),tip:'Reference'},
           ].filter((x:any)=>!x.hide).map((item:any)=>(
-            <button key={item.tip} onClick={item.cb} style={{...sidebtn(item.active),marginBottom:2}} title={item.tip}>
-              {item.icon}
-              {item.badge&&<span style={{position:'absolute',top:4,right:4,width:6,height:6,borderRadius:'50%',background:LIME,border:`1.5px solid ${CREAM}`,animation:'pulse 2s ease infinite'}}/>}
-            </button>
+            <Tip key={item.tip} label={item.badge?`${item.tip} · live`:item.tip}>
+              <button onClick={item.cb} className="lift" style={{...sidebtn(item.active),marginBottom:2}} aria-label={item.tip} data-tour={item.tip==='Collaborate'?'collab':undefined}>
+                {item.icon}
+                {item.badge&&<span style={{position:'absolute',top:4,right:4,width:6,height:6,borderRadius:'50%',background:LIME,border:`1.5px solid ${CREAM}`,animation:'pulse 2s ease infinite'}}/>}
+              </button>
+            </Tip>
           ))}
 
           <div style={{width:28,height:1.5,background:DARK,opacity:.15,margin:'4px 0'}}/>
 
-          <button onClick={()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}}} style={{...sidebtn(isTransformMode),marginBottom:2}} title="Transform [T]"><Move size={15} strokeWidth={2}/></button>
-          <button onClick={()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}}} style={{...sidebtn(isLassoMode),marginBottom:2}} title="Lasso Select [L]"><Lasso size={15} strokeWidth={2}/></button>
-          <button ref={brushLibBtnRef} onClick={()=>{setShowBrushLib(p=>!p);setShowBrushAdv(false);setShowSurface(false);setShowColorPanel(false);}} style={{...sidebtn(showBrushLib),marginBottom:2}} title="Brush Library">
+          <Tip label="Transform" kbd="T"><button data-tour="tools" className="lift" aria-label="Transform" onClick={()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}}} style={{...sidebtn(isTransformMode),marginBottom:2}}><Move size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Lasso select" kbd="L"><button className="lift" aria-label="Lasso select" onClick={()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}}} style={{...sidebtn(isLassoMode),marginBottom:2}}><Lasso size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Brush library"><button ref={brushLibBtnRef} className="lift" aria-label="Brush library" onClick={()=>{setShowBrushLib(p=>!p);setShowBrushAdv(false);setShowSurface(false);setShowColorPanel(false);}} style={{...sidebtn(showBrushLib),marginBottom:2}}>
             {selectedCustom?<Paintbrush2 size={15} strokeWidth={2}/>:<BrushIcon type={brushType} size={15}/>}
-          </button>
-          <button onClick={()=>setIsEyedropper(p=>!p)} style={{...sidebtn(isEyedropper),marginBottom:2}} title="Eyedropper [Alt+E]"><Pipette size={15} strokeWidth={2}/></button>
-          <button onClick={cycleSymmetry} style={{...sidebtn(symmetry!=='none'),marginBottom:2}} title={`Symmetry: ${symmetry}`}>
+          </button></Tip>
+          <Tip label="Eyedropper" kbd="Alt+E"><button className="lift" aria-label="Eyedropper" onClick={()=>setIsEyedropper(p=>!p)} style={{...sidebtn(isEyedropper),marginBottom:2}}><Pipette size={15} strokeWidth={2}/></button></Tip>
+          <Tip label={`Symmetry · ${symmetry}`}><button className="lift" aria-label="Symmetry" onClick={cycleSymmetry} style={{...sidebtn(symmetry!=='none'),marginBottom:2}}>
             <Spline size={14} strokeWidth={2}/>
             {symmetry!=='none'&&<span style={{position:'absolute',bottom:3,right:3,fontSize:6,fontFamily:"'Space Mono',monospace",fontWeight:700,lineHeight:1}}>{symmetry==='vertical'?'V':symmetry==='horizontal'?'H':'+'}</span>}
-          </button>
-          <button onClick={()=>setShowCanvasSize(p=>!p)} style={{...sidebtn(showCanvasSize),marginBottom:2}} title="Canvas Size"><Expand size={14} strokeWidth={2}/></button>
-          <button ref={surfaceBtnRef} onClick={()=>{setShowSurface(p=>!p);setShowBrushAdv(false);setShowColorPanel(false);setShowBrushLib(false);}} style={{...sidebtn(showSurface),marginBottom:2}} title={`Surface: ${currentSurface.label}`}>
+          </button></Tip>
+          <Tip label="Canvas size"><button className="lift" aria-label="Canvas size" onClick={()=>setShowCanvasSize(p=>!p)} style={{...sidebtn(showCanvasSize),marginBottom:2}}><Expand size={14} strokeWidth={2}/></button></Tip>
+          <Tip label={`Paper · ${currentSurface.label}`}><button data-tour="tools" ref={surfaceBtnRef} className="lift" aria-label="Paper surface" onClick={()=>{setShowSurface(p=>!p);setShowBrushAdv(false);setShowColorPanel(false);setShowBrushLib(false);}} style={{...sidebtn(showSurface),marginBottom:2}}>
             <div style={{width:18,height:18,borderRadius:5,background:`rgb(${currentSurface.paper.join(',')})`,display:'flex',alignItems:'center',justifyContent:'center'}}><SurfaceIcon type={surface} size={11}/></div>
-          </button>
+          </button></Tip>
 
           <div style={{width:28,height:1.5,background:DARK,opacity:.15,margin:'4px 0'}}/>
 
-          <button ref={layerBtnRef} onClick={()=>{if(layerBtnRef.current){const r=layerBtnRef.current.getBoundingClientRect();const top=Math.min(r.top,window.innerHeight-400);setLayerPanelTop(Math.max(top,8));}setShowLayerPanel(p=>!p);}} style={sidebtn(showLayerPanel)} title="Layers"><Layers size={15} strokeWidth={2}/></button>
-          <button onClick={()=>setShowGallery(p=>!p)} style={sidebtn(showGallery)} title="Gallery [G]"><LayoutGrid size={15} strokeWidth={2}/></button>
+          <Tip label="Layers"><button data-tour="layers" ref={layerBtnRef} className="lift" aria-label="Layers" onClick={()=>{if(layerBtnRef.current){const r=layerBtnRef.current.getBoundingClientRect();const top=Math.min(r.top,window.innerHeight-400);setLayerPanelTop(Math.max(top,8));}setShowLayerPanel(p=>!p);}} style={sidebtn(showLayerPanel)}><Layers size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Gallery" kbd="G"><button className="lift" aria-label="Gallery" onClick={()=>setShowGallery(p=>!p)} style={sidebtn(showGallery)}><LayoutGrid size={15} strokeWidth={2}/></button></Tip>
 
           <div style={{flex:1}}/>
           <div style={{width:28,height:1.5,background:DARK,opacity:.15,marginBottom:6}}/>
-          <button onClick={()=>setShowHelp(p=>!p)} style={sidebtn(showHelp)} title="Shortcuts [?]"><HelpCircle size={14} strokeWidth={2}/></button>
+          <Tip label="Shortcuts & tour" kbd="?"><button className="lift" aria-label="Shortcuts and tour" onClick={()=>setShowHelp(p=>!p)} style={sidebtn(showHelp)}><HelpCircle size={14} strokeWidth={2}/></button></Tip>
         </div>
 
         {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
         <div style={{position:'fixed',left:sideW,right:0,top:0,height:headerH,background:WHITE,borderBottom:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 10px':'0 16px',zIndex:150,gap:isMobile?6:12}}>
 
           {/* Mobile hamburger */}
-          {isMobile&&<button onClick={()=>setMobileDrawer(true)} style={{width:32,height:32,border:BORDER,borderRadius:8,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Menu size={15} strokeWidth={2}/></button>}
+          {isMobile&&<button data-tour="menu" aria-label="Menu" onClick={()=>setMobileDrawer(true)} style={{width:32,height:32,border:BORDER,borderRadius:8,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Menu size={15} strokeWidth={2}/></button>}
 
           {/* Logo */}
           <div style={{display:'flex',alignItems:'baseline',gap:0,flexShrink:0,userSelect:'none'}}>
@@ -2015,7 +2137,7 @@ export default function App() {
           {!isMobile&&<div style={{width:1,height:22,background:DARK,opacity:.12,flexShrink:0}}/>}
 
           {/* Workspace tabs */}
-          <div style={{display:'flex',gap:4,flexShrink:0}}>
+          <div data-tour="workspace" style={{display:'flex',gap:4,flexShrink:0}}>
             <button className="ws-tab" onClick={()=>switchWorkspace('paint')}
               style={{background:workspace==='paint'?DARK:SAND,color:workspace==='paint'?WHITE:MUTED,border:workspace==='paint'?BORDER:`1.5px solid ${SAND}`}}>
               <Paintbrush2 size={12} strokeWidth={2}/>{!isMobile&&' Paint'}
@@ -2046,6 +2168,7 @@ export default function App() {
                 {isLassoMode&&<span className="pill" style={{background:DARK,color:LIME}}>{lassoPhase==='painting'?'LASSO PAINT':'LASSO'}</span>}
                 {(flipH||flipV)&&<span className="pill" style={{background:SAND,color:MUTED}}>{flipH&&flipV?'H+V FLIP':flipH?'H FLIP':'V FLIP'}</span>}
                 {symmetry!=='none'&&<span className="pill" style={{background:SAND,color:MUTED}}>{symmetry.toUpperCase()} SYM</span>}
+                {stabilizer>0&&<span className="pill" style={{background:SAND,color:MUTED}}>SMOOTH {stabilizer}</span>}
               </>
             )}
           </div>
@@ -2094,21 +2217,22 @@ export default function App() {
           <div style={{position:'absolute',top:0,left:0,transformOrigin:'0 0',transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,willChange:'transform'}}>
 
             {/* Single floating canvas panel: drag handle + drawing canvas, tightly fitted */}
-            <div style={{display:'inline-flex',flexDirection:'column',border:BORDER,borderRadius:10,overflow:'hidden',verticalAlign:'top'}}>
+            <div data-tour="canvas" style={{display:'inline-flex',flexDirection:'column',border:BORDER,borderRadius:10,overflow:'hidden',verticalAlign:'top',boxShadow:`0 1px 0 ${DARK}, 0 18px 40px -18px rgba(13,11,7,.35)`}}>
 
               {/* Drag handle — grab here to reposition canvas */}
               <div onMouseDown={startCanvasDrag} style={{height:isMobile?20:24,background:DARK,display:'flex',alignItems:'center',padding:'0 8px',cursor:'move',flexShrink:0,gap:6,userSelect:'none'}}>
                 <GripVertical size={isMobile?10:12} color="rgba(255,255,255,.5)" strokeWidth={2}/>
                 <span style={{fontFamily:"'Space Mono',monospace",fontSize:isMobile?6:7.5,color:'rgba(255,255,255,.55)',fontWeight:700,letterSpacing:1.2,flex:1}}>{isMobile?'DRAG TO MOVE':'CANVAS — DRAG TO MOVE'}</span>
-                <button onClick={resetZoom} title="Re-center canvas"
+                <button onClick={fitCanvas} title="Fit canvas to screen [0]"
                   style={{background:'rgba(255,255,255,.08)',border:'none',cursor:'pointer',color:'rgba(255,255,255,.4)',display:'flex',alignItems:'center',padding:'2px 5px',borderRadius:4,gap:3}}>
-                  <RotateCcw size={8} strokeWidth={2}/><span style={{fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,letterSpacing:.5}}>CENTER</span>
+                  <RotateCcw size={8} strokeWidth={2}/><span style={{fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,letterSpacing:.5}}>FIT</span>
                 </button>
               </div>
 
               {/* Drawing canvas — the only white surface */}
               <div style={{transform:`scaleX(${flipH?-1:1}) scaleY(${flipV?-1:1})`,transformOrigin:'50% 50%',display:'block',position:'relative',lineHeight:0}}>
                 <canvas ref={canvasRef} onPointerDown={handleCanvasDown}
+                  onContextMenu={e=>{e.preventDefault();if(isMobile||animPlaying||isTransformMode||isLassoMode) return;setPopPal(p=>p?null:{x:e.clientX,y:e.clientY});}}
                   onPointerEnter={()=>{setIsOverCanvas(true);const cd=cursorDivRef.current;if(cd)cd.style.opacity='1';}}
                   onPointerLeave={()=>{setIsOverCanvas(false);const cd=cursorDivRef.current;if(cd)cd.style.opacity='0';}}
                   style={{display:'block',cursor:(isLassoMode&&lassoPhase==='drawing')||isTransformMode||isEyedropper||spaceHeld?'inherit':'none',userSelect:'none',WebkitUserSelect:'none',touchAction:'none'}}/>
@@ -2376,26 +2500,9 @@ export default function App() {
                 <button onClick={()=>setShowColorPanel(false)} style={{...ibtn(),width:24,height:24,borderRadius:7}}><X size={11} strokeWidth={2}/></button>
               </div>
 
-              {/* Color swatch + native picker */}
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
-                <div className="hs" style={{position:'relative',width:44,height:44,borderRadius:'50%',background:colorCss,border:BORDER,overflow:'hidden',cursor:'pointer',flexShrink:0}}>
-                  <input type="color" value={`#${color.map(v=>v.toString(16).padStart(2,'0')).join('')}`} onChange={e=>{const hx=e.target.value;applyColor([parseInt(hx.slice(1,3),16),parseInt(hx.slice(3,5),16),parseInt(hx.slice(5,7),16)]);}} style={{position:'absolute',inset:0,opacity:0,width:'100%',height:'100%',cursor:'pointer'}} title="System color picker"/>
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.5,marginBottom:3}}>HEX</div>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:12,fontWeight:700,color:DARK}}>#{color.map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase()}</div>
-                </div>
-              </div>
-
-              {/* HSL sliders */}
-              <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:14}}>
-                {([{lbl:'H',val:h,min:0,max:360,bg:`linear-gradient(to right,hsl(0,${s}%,${l}%),hsl(60,${s}%,${l}%),hsl(120,${s}%,${l}%),hsl(180,${s}%,${l}%),hsl(240,${s}%,${l}%),hsl(300,${s}%,${l}%),hsl(360,${s}%,${l}%))`,cb:(v:number)=>setFromHsl(v,s,l)},{lbl:'S',val:s,min:0,max:100,bg:`linear-gradient(to right,hsl(${h},0%,${l}%),hsl(${h},100%,${l}%))`,cb:(v:number)=>setFromHsl(h,v,l)},{lbl:'L',val:l,min:0,max:100,bg:`linear-gradient(to right,#000,hsl(${h},${s}%,50%),#fff)`,cb:(v:number)=>setFromHsl(h,s,v)}] as const).map(({lbl,val,min,max,bg,cb})=>(
-                  <div key={lbl} style={{display:'flex',alignItems:'center',gap:6}}>
-                    <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,width:11}}>{lbl}</span>
-                    <input type="range" min={min} max={max} value={val} onChange={e=>cb(+e.target.value)} style={{flex:1,background:bg}}/>
-                    <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:DARK,fontWeight:700,width:30,textAlign:'right'}}>{val}{lbl==='H'?'\u00B0':'%'}</span>
-                  </div>
-                ))}
+              {/* Saturation/value square + hue rail + hex */}
+              <div style={{marginBottom:14}}>
+                <ColorPicker rgb={color} onChange={setColorLive} onCommit={pushRecent} onEyedropper={()=>{setIsEyedropper(true);setShowColorPanel(false);}}/>
               </div>
 
               {/* Recent colors */}
@@ -2421,7 +2528,7 @@ export default function App() {
 
         {/* ══ BRUSH LIBRARY PANEL ══════════════════════════════════════════════ */}
         {showBrushLib&&(
-          <div ref={brushLibRef} style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,top:isMobile?headerH+8:160,width:isMobile?'auto':460,maxWidth:isMobile?'calc(100vw - 16px)':undefined,maxHeight:isMobile?'calc(100vh - 130px)':480,animation:'sl 180ms ease',zIndex:320,background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+          <div ref={brushLibRef} style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,top:isMobile?headerH+8:160,width:isMobile?'auto':460,maxWidth:isMobile?'calc(100vw - 16px)':undefined,maxHeight:isMobile?'calc(100vh - 130px)':480,animation:'sl 180ms ease',zIndex:320,background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',boxShadow:SHADOW_SM,display:'flex',flexDirection:'column'}}>
             {/* Header */}
             <div style={{padding:'12px 14px 10px',borderBottom:BORDER,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div style={{fontWeight:800,fontSize:13,letterSpacing:-.3}}>Brush Library</div>
@@ -2509,15 +2616,15 @@ export default function App() {
         )}
 
         {/* ══ TOOL TRAY ════════════════════════════════════════════════════════ */}
-        <div style={{position:'fixed',left:sideW,right:0,bottom:0,height:toolH,background:WHITE,borderTop:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 6px':'0 14px',gap:isMobile?4:8,zIndex:150,overflowX:'auto',scrollbarWidth:'none'}}>
+        <div style={{position:'fixed',left:sideW,right:0,bottom:0,height:toolH,background:WHITE,borderTop:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 6px':'0 14px',gap:isMobile?3:8,zIndex:150,overflowX:'auto',scrollbarWidth:'none'}}>
 
           {/* Quick-access basic brushes */}
-          <div style={{display:'flex',gap:2,flexShrink:0,alignItems:'center'}}>
+          <div data-tour="brushes" style={{display:'flex',gap:2,flexShrink:0,alignItems:'center'}}>
             {BRUSH_DEFS.filter(b=>b.category==='Basic'&&b.type!=='eraser').map(({type,key})=>{
               const isActive=!selectedCustom&&brushType===type&&!eraserMode;
               return(
                 <button key={type} onClick={()=>{setBrushType(type);setSelectedCustom(null);setIsEyedropper(false);setEraserMode(false);}} title={`${BRUSH_DEFS.find(b=>b.type===type)?.label} [${key}]`}
-                  style={{width:isMobile?28:32,height:isMobile?38:46,border:BORDER,borderRadius:8,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
+                  style={{width:isMobile?26:32,height:isMobile?38:46,border:BORDER,borderRadius:8,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
                   <BrushIcon type={type} size={isMobile?10:12}/>
                   {!isMobile&&<span style={{fontFamily:"'Space Mono',monospace",fontSize:5.5,fontWeight:700,letterSpacing:.5,color:isActive?DARK:MUTED}}>{key}</span>}
                 </button>
@@ -2525,10 +2632,10 @@ export default function App() {
             })}
           </div>
 
-          <button onClick={()=>{setEraserMode(p=>!p);setSmudgeMode(false);}} title="Eraser Mode [E] -- uses current brush" style={{...ibtn('default',eraserMode),width:isMobile?28:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3,background:eraserMode?PINK:WHITE,color:eraserMode?WHITE:DARK}}>
+          <button onClick={()=>{setEraserMode(p=>!p);setSmudgeMode(false);}} title="Eraser Mode [E] -- uses current brush" style={{...ibtn('default',eraserMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3,background:eraserMode?PINK:WHITE,color:eraserMode?WHITE:DARK}}>
             <Eraser size={isMobile?11:13} strokeWidth={2}/>
           </button>
-          <button onClick={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}} title="Smudge [S]" style={{...ibtn('default',smudgeMode),width:isMobile?28:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3}}>
+          <button onClick={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}} title="Smudge [S]" style={{...ibtn('default',smudgeMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3}}>
             <Blend size={isMobile?11:13} strokeWidth={2}/>
           </button>
           {!isMobile&&<button ref={brushAdvBtnRef} onClick={()=>{setShowBrushAdv(p=>!p);setShowSurface(false);setShowBrushLib(false);setShowColorPanel(false);}} style={{...ibtn('default',showBrushAdv),width:28,height:34,borderRadius:8,flexShrink:0}}>
@@ -2536,26 +2643,26 @@ export default function App() {
           </button>}
 
           {/* Size & Flow — grouped with brushes */}
-          {!isMobile?(<div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0,marginLeft:4}}>
-            {([{lbl:'SIZE',val:brushSize,min:2,max:150,cb:(v:number)=>setBrushSize(v)},{lbl:'FLOW',val:opacity,min:5,max:100,cb:(v:number)=>setOpacity(v)}] as const).map(({lbl,val,min,max,cb})=>(
-              <div key={lbl} style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28,letterSpacing:.5}}>{lbl}</span>
-                <input type="range" min={min} max={max} value={val} onChange={e=>cb(+e.target.value)} style={{width:88,background:`linear-gradient(to right,${DARK} ${(val-min)/(max-min)*100}%,rgba(0,0,0,.1) 0%)`}}/>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{val}{lbl==='FLOW'?'%':''}</span>
+          {!isMobile?(<div data-tour="strokes" style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0,marginLeft:4}}>
+            {([{lbl:'SIZE',val:brushSize,min:2,max:150,cb:(v:number)=>setBrushSize(v),unit:''},{lbl:'FLOW',val:opacity,min:5,max:100,cb:(v:number)=>setOpacity(v),unit:'%'},{lbl:'SMOOTH',val:stabilizer,min:0,max:100,cb:(v:number)=>setStabilizer(v),unit:''}] as const).map(({lbl,val,min,max,cb,unit})=>(
+              <div key={lbl} style={{display:'flex',alignItems:'center',gap:6}} title={lbl==='SMOOTH'?'Stabilizer: trails the brush behind your pointer for steadier lines':undefined}>
+                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:38,letterSpacing:.5}}>{lbl}</span>
+                <input type="range" min={min} max={max} value={val} onChange={e=>cb(+e.target.value)} aria-label={lbl} style={{width:88,background:`linear-gradient(to right,${DARK} ${(val-min)/(max-min)*100}%,rgba(0,0,0,.1) 0%)`}}/>
+                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{lbl==='SMOOTH'&&val===0?'OFF':`${val}${unit}`}</span>
               </div>
             ))}
           </div>):(
             /* Mobile: compact size slider only */
-            <div style={{display:'flex',alignItems:'center',gap:3,flexGrow:1,flexShrink:0,flexBasis:0,maxWidth:120}}>
-              <input type="range" min={2} max={150} value={brushSize} onChange={e=>setBrushSize(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${DARK} ${(brushSize-2)/148*100}%,rgba(0,0,0,.1) 0%)`}}/>
-              <span style={{fontFamily:"'Space Mono',monospace",fontSize:7,color:DARK,fontWeight:700,width:18,textAlign:'right'}}>{brushSize}</span>
+            /* Range inputs refuse to shrink below ~129px unless told to; the size HUD shows the value */
+            <div data-tour="strokes" style={{display:'flex',alignItems:'center',flex:'1 1 0',minWidth:44,maxWidth:120}}>
+              <input type="range" min={2} max={150} value={brushSize} onChange={e=>setBrushSize(+e.target.value)} aria-label="Brush size" style={{width:'100%',minWidth:0,background:`linear-gradient(to right,${DARK} ${(brushSize-2)/148*100}%,rgba(0,0,0,.1) 0%)`}}/>
             </div>
           )}
 
           {!isMobile&&<div style={{width:1,height:36,background:DARK,opacity:.1,flexShrink:0}}/>}
 
           {/* Color swatch — opens color panel */}
-          <button ref={colorBtnRef} onClick={()=>{setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);}} title="Color [C]" style={{position:'relative',width:isMobile?30:38,height:isMobile?30:38,borderRadius:'50%',background:colorCss,border:showColorPanel?`2.5px solid ${LIME}`:BORDER,cursor:'pointer',flexShrink:0,padding:0,display:'flex',alignItems:'center',justifyContent:'center',transition:'border 120ms ease'}}>
+          <button data-tour="color" ref={colorBtnRef} onClick={()=>{setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);}} title="Color [C]" aria-label="Color" style={{position:'relative',width:isMobile?30:38,height:isMobile?30:38,borderRadius:'50%',background:colorCss,border:showColorPanel?`2.5px solid ${LIME}`:BORDER,cursor:'pointer',flexShrink:0,padding:0,display:'flex',alignItems:'center',justifyContent:'center',transition:'border 120ms ease'}}>
             <ChevronDown size={isMobile?8:10} strokeWidth={2.5} style={{color:l>60?DARK:WHITE,opacity:.7}}/>
           </button>
 
@@ -2563,10 +2670,13 @@ export default function App() {
 
           {/* Actions */}
           <div style={{display:'flex',gap:isMobile?3:5,alignItems:'center',flexShrink:0}}>
-            <button onClick={handleUndo} style={{...ibtn(),width:isMobile?28:34,height:isMobile?38:46,borderRadius:9}} title="Undo [Cmd+Z]"><Undo2 size={isMobile?11:13} strokeWidth={2}/></button>
-            {!isMobile&&<button onClick={handleClear} style={{...ibtn('danger'),width:34,height:46,borderRadius:9}} title={clearConfirm?'Confirm clear?':'Clear canvas'}><Trash2 size={13} strokeWidth={2}/></button>}
-            {!isMobile&&<button onClick={()=>saveToGallery()} style={{width:34,height:46,border:BORDER,borderRadius:9,background:'#1a9e5c',color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}} title="Save to gallery"><LayoutGrid size={13} strokeWidth={2}/></button>}
-            <button onClick={handleSave} style={{height:isMobile?38:46,padding:isMobile?'0 10px':'0 16px',border:BORDER,borderRadius:9,background:DARK,color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',gap:6,fontFamily:"'Space Grotesk',sans-serif",fontSize:isMobile?10:12,fontWeight:700,flexShrink:0}}>
+            <div style={{display:'flex',border:BORDER,borderRadius:9,overflow:'hidden',flexShrink:0}}>
+              <button onClick={handleUndo} disabled={!hist.undo} aria-label="Undo" title="Undo [Ctrl+Z]" style={{width:isMobile?26:34,height:isMobile?34:42,border:'none',borderRight:BORDER,background:WHITE,color:DARK,cursor:hist.undo?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',opacity:hist.undo?1:.35}}><Undo2 size={isMobile?11:13} strokeWidth={2}/></button>
+              <button onClick={handleRedo} disabled={!hist.redo} aria-label="Redo" title="Redo [Ctrl+Shift+Z]" style={{width:isMobile?26:34,height:isMobile?34:42,border:'none',background:WHITE,color:DARK,cursor:hist.redo?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',opacity:hist.redo?1:.35}}><Redo2 size={isMobile?11:13} strokeWidth={2}/></button>
+            </div>
+            {!isMobile&&<button onClick={handleClear} className="lift" style={{...ibtn('danger'),width:34,height:46,borderRadius:9}} title={clearConfirm?'Click again to clear':'Clear layer'}><Trash2 size={13} strokeWidth={2}/></button>}
+            {!isMobile&&<button data-tour="save" onClick={()=>saveToGallery()} className="lift" style={{width:34,height:46,border:BORDER,borderRadius:9,background:'#1a9e5c',color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}} title="Save to gallery"><LayoutGrid size={13} strokeWidth={2}/></button>}
+            <button data-tour="save" onClick={handleSave} className="lift" style={{height:isMobile?38:46,padding:isMobile?'0 10px':'0 16px',border:BORDER,borderRadius:9,background:DARK,color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',gap:6,fontFamily:"'Space Grotesk',sans-serif",fontSize:isMobile?10:12,fontWeight:700,flexShrink:0}}>
               <Download size={isMobile?11:13} strokeWidth={2}/>{!isMobile&&' Save PNG'}
             </button>
           </div>
@@ -2636,7 +2746,7 @@ export default function App() {
         {/* ══ GALLERY MODAL ════════════════════════════════════════════════════ */}
         {showGallery&&(
           <div className="modal-bg" onClick={()=>setShowGallery(false)} style={{animation:'fi 140ms ease',alignItems:'flex-start',paddingTop:60}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:WHITE,border:BORDER,borderRadius:isMobile?14:16,width:isMobile?'auto':700,maxWidth:'94vw',maxHeight:'85vh',display:'flex',flexDirection:'column',animation:'su 200ms ease',overflow:'hidden'}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:WHITE,border:BORDER,borderRadius:isMobile?14:16,boxShadow:SHADOW,width:isMobile?'auto':700,maxWidth:'94vw',maxHeight:'85vh',display:'flex',flexDirection:'column',animation:'su 200ms ease',overflow:'hidden'}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 22px 14px',borderBottom:BORDER,background:CREAM,flexShrink:0}}>
                 <div>
                   <h2 style={{fontWeight:800,fontSize:20,color:DARK,letterSpacing:-0.5}}>Gallery</h2>
@@ -2768,15 +2878,18 @@ export default function App() {
                 <button onClick={()=>setShowHelp(false)} style={{...ibtn(),width:32,height:32,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
               </div>
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?'4px 10px':'5px 20px'}}>
-                {[['1–5','Select brushes'],['E','Eraser mode'],['S','Toggle smudge'],['C','Color panel'],['[ / ]','Brush size ±5'],['Alt+E','Eyedropper'],['T','Transform tool'],['L','Lasso select'],['Cmd+Z','Undo'],['Cmd+S','Save PNG'],['Scroll','Zoom'],['Space+Drag','Pan canvas'],['0','Reset zoom'],['F','Flip horizontal'],['V','Flip vertical'],['G','Gallery'],['+ / -','Zoom in/out'],['?','Show shortcuts'],['Esc','Close all panels']].map(([k,d])=>(
+                {[['1–5','Select brushes'],['E','Eraser mode'],['S','Toggle smudge'],['C','Color panel'],['[ / ]','Brush size ±5'],['Alt+E','Eyedropper'],['Right-click','Pop-up palette'],['T','Transform tool'],['L','Lasso select'],['Ctrl+Z','Undo'],['Ctrl+Shift+Z','Redo'],['Ctrl+S','Save PNG'],['Scroll','Zoom'],['Space+Drag','Pan canvas'],['0','Fit to screen'],['F','Flip horizontal'],['V','Flip vertical'],['G','Gallery'],['+ / -','Zoom in/out'],['?','Show shortcuts'],['Esc','Close all panels']].map(([k,d])=>(
                   <div key={k} style={{display:'flex',alignItems:'center',gap:9,padding:'6px 0',borderBottom:`1px solid rgba(0,0,0,.06)`}}>
                     <kbd style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:DARK,background:LIME,border:BORDER,borderRadius:6,padding:'3px 8px',minWidth:70,textAlign:'center',flexShrink:0}}>{k}</kbd>
                     <span style={{fontSize:12,color:DARK}}>{d}</span>
                   </div>
                 ))}
               </div>
-              <div style={{marginTop:18,paddingTop:14,borderTop:BORDER,textAlign:'center'}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:10,color:MUTED,fontWeight:700,letterSpacing:.5}}>SPECTRAL REFLECTANCE PIGMENT MIXING</span>
+              <div style={{marginTop:18,paddingTop:14,borderTop:BORDER,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.5}}>SPECTRAL PIGMENT MIXING</span>
+                <button onClick={()=>{setShowHelp(false);setTimeout(()=>setTourOpen(true),120);}} className="lift" style={{...ibtn('lime'),height:34,padding:'0 14px',borderRadius:9,gap:7}}>
+                  <Compass size={13} strokeWidth={2.2}/> Replay the tour
+                </button>
               </div>
             </div>
           </div>
@@ -2786,7 +2899,7 @@ export default function App() {
 
       {/* ══ LAYER PANEL ══════════════════════════════════════════════════════ */}
       {showLayerPanel&&(
-        <div ref={layerPanelRef} style={{position:'fixed',left:isMobile?8:58,right:isMobile?8:undefined,top:isMobile?headerH+8:layerPanelTop,width:isMobile?'auto':234,maxWidth:isMobile?'calc(100vw - 16px)':undefined,zIndex:230,animation:'sl 180ms cubic-bezier(0.34,1.56,0.64,1)',display:'flex',flexDirection:'column',background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',maxHeight:isMobile?`calc(100vh - ${headerH+toolH+16}px)`:`calc(100vh - ${layerPanelTop + 8}px)`}}>
+        <div ref={layerPanelRef} style={{position:'fixed',left:isMobile?8:58,right:isMobile?8:undefined,top:isMobile?headerH+8:layerPanelTop,width:isMobile?'auto':234,maxWidth:isMobile?'calc(100vw - 16px)':undefined,zIndex:230,animation:'sl 180ms cubic-bezier(0.34,1.56,0.64,1)',display:'flex',flexDirection:'column',background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',boxShadow:SHADOW_SM,maxHeight:isMobile?`calc(100vh - ${headerH+toolH+16}px)`:`calc(100vh - ${layerPanelTop + 8}px)`}}>
           {/* Header */}
           <div style={{display:'flex',alignItems:'center',gap:7,padding:'11px 12px 9px',borderBottom:BORDER,userSelect:'none',flexShrink:0,background:DARK}}>
             <Layers size={12} color="rgba(255,255,255,.8)" strokeWidth={2}/>
@@ -2987,6 +3100,11 @@ export default function App() {
                 <input type="range" min={5} max={100} value={opacity} onChange={e=>setOpacity(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${DARK} ${(opacity-5)/95*100}%,rgba(0,0,0,.1) 0%)`}}/>
                 <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{opacity}%</span>
               </div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginTop:8}}>
+                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28}}>SMTH</span>
+                <input type="range" min={0} max={100} value={stabilizer} onChange={e=>setStabilizer(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${DARK} ${stabilizer}%,rgba(0,0,0,.1) 0%)`}}/>
+                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{stabilizer||'OFF'}</span>
+              </div>
             </div>
 
             {/* Actions */}
@@ -2995,87 +3113,198 @@ export default function App() {
               <button onClick={()=>{saveToGallery();setMobileDrawer(false);}} style={{flex:1,height:38,border:BORDER,borderRadius:9,background:'#1a9e5c',color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5,fontFamily:"'Space Grotesk',sans-serif",fontSize:11,fontWeight:700}}><LayoutGrid size={12}/> Save</button>
             </div>
 
-            <button onClick={()=>{setShowHelp(true);setMobileDrawer(false);}} style={{...ibtn('ghost'),width:'100%',height:32,justifyContent:'center',gap:5,fontSize:11,marginTop:4}}>
-              <HelpCircle size={12}/> Shortcuts
-            </button>
+            <div style={{display:'flex',gap:4,marginTop:4}}>
+              <button onClick={()=>{setShowHelp(true);setMobileDrawer(false);}} style={{...ibtn('ghost'),flex:1,height:32,justifyContent:'center',gap:5,fontSize:11}}>
+                <HelpCircle size={12}/> Shortcuts
+              </button>
+              <button onClick={()=>{setMobileDrawer(false);setTimeout(()=>setTourOpen(true),220);}} style={{...ibtn('ghost'),flex:1,height:32,justifyContent:'center',gap:5,fontSize:11}}>
+                <Compass size={12}/> Tour
+              </button>
+            </div>
           </div>
         </>
       )}
 
-      {showStartupPicker&&(
-        <div style={{position:'fixed',inset:0,background:CREAM,display:'flex',alignItems:'center',justifyContent:'center',zIndex:9000,animation:'fi 180ms ease'}}>
+      {showStartupPicker&&(()=>{
+        const recent=[...gallery.filter(g=>!g.isAuto),...gallery.filter(g=>g.isAuto)].slice(0,4);
+        return(
+        <div style={{position:'fixed',inset:0,background:CREAM,display:'flex',zIndex:9000,animation:'fi 180ms ease',overflowY:'auto',padding:isMobile?'12px 0':'24px 0'}}>
           {/* Dot-grid background texture */}
-          <div style={{position:'absolute',inset:0,backgroundImage:`radial-gradient(circle, rgba(13,11,7,.07) 1px, transparent 1px)`,backgroundSize:'28px 28px',pointerEvents:'none'}}/>
-          <div style={{position:'relative',background:WHITE,border:BORDER,borderRadius:isMobile?14:18,boxShadow:`8px 8px 0 ${DARK}`,padding:isMobile?'24px 18px':'36px 40px',width:540,maxWidth:'94vw',maxHeight:isMobile?'90vh':undefined,overflowY:isMobile?'auto':undefined,animation:'su 240ms ease'}}>
+          <div style={{position:'fixed',inset:0,backgroundImage:`radial-gradient(circle, rgba(13,11,7,.07) 1px, transparent 1px)`,backgroundSize:'28px 28px',pointerEvents:'none'}}/>
+          {/* margin:auto centres when there's room and scrolls from the top when there isn't */}
+          <div style={{position:'relative',margin:'auto',display:'flex',background:WHITE,border:BORDER,borderRadius:isMobile?16:22,boxShadow:`8px 8px 0 ${DARK}`,width:isMobile?540:960,maxWidth:'94vw',overflow:'hidden',flexShrink:0,animation:'su 260ms cubic-bezier(.22,1,.36,1)'}}>
 
-            {/* Header */}
-            <div style={{marginBottom:isMobile?18:28}}>
-              <div style={{display:'flex',alignItems:'baseline',gap:0,marginBottom:12,userSelect:'none'}}>
-                <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:26,fontWeight:800,color:DARK,letterSpacing:-1,lineHeight:1}}>me</span>
-                <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:26,fontWeight:400,color:MUTED,letterSpacing:-0.5,lineHeight:1}}>paint</span>
-              </div>
-              <h2 style={{fontWeight:800,fontSize:isMobile?22:30,color:DARK,letterSpacing:-1,lineHeight:1.1,marginBottom:8}}>New Canvas</h2>
-              <p style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.8}}>CHOOSE YOUR CANVAS SIZE TO BEGIN</p>
-            </div>
-
-            {/* Presets */}
-            <div style={{marginBottom:20}}>
-              <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:10}}>PRESETS</div>
-              <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(3,1fr)':'repeat(4,1fr)',gap:isMobile?5:7}}>
-                {CANVAS_PRESETS.map(p=>{
-                  const sel=spW===p.w&&spH===p.h;
-                  const aspect=p.w/p.h;
-                  const bw=Math.min(36,Math.round(36*Math.min(1,aspect)));
-                  const bh=Math.min(24,Math.round(24*Math.min(1,1/aspect)));
-                  return(
-                    <button key={p.label} onClick={()=>{setSpW(p.w);setSpH(p.h);}}
-                      style={{border:BORDER,borderRadius:9,padding:'10px 6px 8px',background:sel?LIME:WHITE,color:DARK,cursor:'pointer',transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',textAlign:'center',display:'flex',flexDirection:'column',alignItems:'center',gap:6}}>
-                      {/* Aspect ratio preview */}
-                      <div style={{width:bw,height:bh,border:`1.5px solid ${sel?DARK:'rgba(0,0,0,.25)'}`,borderRadius:3,background:sel?'rgba(0,0,0,.12)':'rgba(0,0,0,.04)',flexShrink:0}}/>
-                      <div style={{fontSize:10,fontWeight:800,fontFamily:"'Space Grotesk',sans-serif"}}>{p.label}</div>
-                      <div style={{fontFamily:"'Space Mono',monospace",fontSize:7.5,color:sel?DARK:MUTED}}>{p.w}×{p.h}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Custom */}
-            <div style={{marginBottom:isMobile?18:28}}>
-              <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:10}}>CUSTOM SIZE</div>
-              <div style={{display:'flex',gap:isMobile?8:12,alignItems:'flex-end'}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:11,fontWeight:700,marginBottom:6}}>Width (px)</div>
-                  <input type="number" value={spW} onChange={e=>setSpW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
+            {/* ── Hero: what makes mepaint different */}
+            {!isMobile&&(
+              <div style={{width:380,flexShrink:0,background:DARK,color:WHITE,padding:'34px 34px 30px',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',inset:0,backgroundImage:`radial-gradient(circle, rgba(196,255,69,.10) 1px, transparent 1px)`,backgroundSize:'22px 22px',pointerEvents:'none'}}/>
+                <div style={{position:'relative',display:'flex',alignItems:'baseline',userSelect:'none'}}>
+                  <span style={{fontSize:24,fontWeight:800,letterSpacing:-1,lineHeight:1}}>me</span>
+                  <span style={{fontSize:24,fontWeight:400,color:'#A9A294',letterSpacing:-.5,lineHeight:1}}>paint</span>
                 </div>
-                <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:22,fontWeight:800,color:MUTED,paddingBottom:10}}>×</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:11,fontWeight:700,marginBottom:6}}>Height (px)</div>
-                  <input type="number" value={spH} onChange={e=>setSpH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
-                </div>
-                {/* Live aspect indicator */}
-                <div style={{flexShrink:0,display:isMobile?'none':'flex',flexDirection:'column',alignItems:'center',gap:4,paddingBottom:8}}>
-                  <div style={{width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',border:BORDER,borderRadius:8,background:SAND}}>
-                    {(()=>{const a=spW/Math.max(1,spH);const bw=Math.min(22,Math.round(22*Math.min(1,a)));const bh=Math.min(22,Math.round(22*Math.min(1,1/a)));return<div style={{width:bw,height:bh,border:`1.5px solid ${DARK}`,borderRadius:2,background:'rgba(0,0,0,.08)'}}/>;})()}
+                <div style={{position:'relative',margin:'38px 0 22px'}}>
+                  <MixDemo size={176} stroke={WHITE}/>
+                  <div style={{display:'flex',alignItems:'center',gap:7,marginTop:14,fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:.6,color:'rgba(255,255,255,.55)'}}>
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.blue,border:`1.5px solid ${WHITE}`}}/>BLUE +
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.yellow,border:`1.5px solid ${WHITE}`}}/>YELLOW =
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.mix,border:`1.5px solid ${WHITE}`}}/><span style={{color:LIME}}>GREEN</span>
                   </div>
-                  <span style={{fontFamily:"'Space Mono',monospace",fontSize:7,color:MUTED,fontWeight:700}}>{(spW/Math.max(1,spH)).toFixed(2)}</span>
+                </div>
+                <h1 style={{position:'relative',fontSize:34,fontWeight:800,letterSpacing:-1.4,lineHeight:1.02,marginBottom:12}}>
+                  Paint that mixes like the <span style={{color:LIME}}>real thing.</span>
+                </h1>
+                <p style={{position:'relative',fontSize:13,lineHeight:1.55,color:'rgba(255,255,255,.62)',marginBottom:22,fontWeight:500}}>
+                  Colours blend like physical pigment, not screen pixels, so your glazes and mixes come out the way they would on paper.
+                </p>
+                <div style={{position:'relative',display:'flex',flexDirection:'column',gap:9,marginTop:'auto'}}>
+                  {['14 natural brushes + Procreate import','Layers, blend modes & textured papers','Frame-by-frame animation','Paint together in real time'].map(f=>(
+                    <div key={f} style={{display:'flex',alignItems:'center',gap:10,fontSize:12.5,fontWeight:600,color:'rgba(255,255,255,.86)'}}>
+                      <span style={{width:16,height:16,borderRadius:5,background:LIME,color:DARK,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Check size={10} strokeWidth={3.2}/></span>{f}
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Confirm */}
-            <button onClick={confirmStartupSize}
-              style={{width:'100%',height:54,border:BORDER,borderRadius:12,background:LIME,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontFamily:"'Space Grotesk',sans-serif",fontSize:15,fontWeight:800,letterSpacing:-0.3,transition:'all 100ms'}}>
-              <Paintbrush2 size={17} strokeWidth={2.5}/>
-              Start Painting — {spW} × {spH}
-            </button>
+            {/* ── Setup */}
+            <div style={{flex:1,minWidth:0,padding:isMobile?'22px 18px':'34px 38px 30px'}}>
+              <div style={{marginBottom:isMobile?16:24}}>
+                {isMobile&&(
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+                    <div style={{display:'flex',alignItems:'baseline',userSelect:'none'}}>
+                      <span style={{fontSize:22,fontWeight:800,color:DARK,letterSpacing:-1,lineHeight:1}}>me</span>
+                      <span style={{fontSize:22,fontWeight:400,color:MUTED,letterSpacing:-.5,lineHeight:1}}>paint</span>
+                    </div>
+                    <MixDemo size={64}/>
+                  </div>
+                )}
+                <h2 style={{fontWeight:800,fontSize:isMobile?22:28,color:DARK,letterSpacing:-1,lineHeight:1.1,marginBottom:6}}>Start a new canvas</h2>
+                <p style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.8}}>PICK A SIZE · YOU CAN CHANGE IT ANYTIME</p>
+              </div>
 
-            <div style={{marginTop:14,textAlign:'center'}}>
-              <span style={{fontFamily:"'Space Mono',monospace",fontSize:8.5,color:MUTED,fontWeight:700,letterSpacing:.5}}>CANVAS IS FREELY MOVABLE AND RESIZABLE ANYTIME</span>
+              {/* Presets */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>PRESETS</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:isMobile?5:8}}>
+                  {CANVAS_PRESETS.map(p=>{
+                    const sel=spW===p.w&&spH===p.h;
+                    const aspect=p.w/p.h;
+                    const bw=Math.min(36,Math.round(36*Math.min(1,aspect)));
+                    const bh=Math.min(24,Math.round(24*Math.min(1,1/aspect)));
+                    return(
+                      <button key={p.label} onClick={()=>{setSpW(p.w);setSpH(p.h);}} className="lift" aria-pressed={sel}
+                        style={{border:BORDER,borderRadius:10,padding:isMobile?'8px 2px 6px':'11px 6px 9px',background:sel?LIME:WHITE,color:DARK,cursor:'pointer',textAlign:'center',display:'flex',flexDirection:'column',alignItems:'center',gap:isMobile?4:6,boxShadow:sel?SHADOW_SM:'none'}}>
+                        <div style={{height:24,display:'flex',alignItems:'center'}}>
+                          <div style={{width:bw,height:bh,border:`1.5px solid ${sel?DARK:'rgba(0,0,0,.28)'}`,borderRadius:3,background:sel?'rgba(0,0,0,.12)':'rgba(0,0,0,.04)'}}/>
+                        </div>
+                        <div style={{fontSize:isMobile?9.5:11,fontWeight:800,fontFamily:"'Space Grotesk',sans-serif"}}>{p.label}</div>
+                        <div style={{fontFamily:"'Space Mono',monospace",fontSize:isMobile?6.5:7.5,color:sel?DARK:MUTED}}>{p.w}×{p.h}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Custom */}
+              <div style={{marginBottom:isMobile?16:22}}>
+                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>CUSTOM SIZE</div>
+                <div style={{display:'flex',gap:isMobile?8:10,alignItems:'center'}}>
+                  <div style={{flex:1,position:'relative'}}>
+                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED}}>W</span>
+                    <input type="number" aria-label="Width in pixels" value={spW} onChange={e=>setSpW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
+                  </div>
+                  <span style={{fontSize:18,fontWeight:800,color:MUTED}}>×</span>
+                  <div style={{flex:1,position:'relative'}}>
+                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED}}>H</span>
+                    <input type="number" aria-label="Height in pixels" value={spH} onChange={e=>setSpH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
+                  </div>
+                  {/* Live aspect indicator */}
+                  <div style={{flexShrink:0,display:isMobile?'none':'flex',alignItems:'center',gap:6}}>
+                    <div style={{width:38,height:38,display:'flex',alignItems:'center',justifyContent:'center',border:BORDER,borderRadius:8,background:SAND}}>
+                      {(()=>{const a=spW/Math.max(1,spH);const bw=Math.min(24,Math.round(24*Math.min(1,a)));const bh=Math.min(24,Math.round(24*Math.min(1,1/a)));return<div style={{width:bw,height:bh,border:`1.5px solid ${DARK}`,borderRadius:2,background:'rgba(0,0,0,.08)',transition:'all 160ms ease'}}/>;})()}
+                    </div>
+                    <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28}}>{(spW/Math.max(1,spH)).toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Confirm */}
+              <button onClick={confirmStartupSize} className="lift"
+                style={{width:'100%',height:54,border:BORDER,borderRadius:12,background:LIME,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontFamily:"'Space Grotesk',sans-serif",fontSize:15,fontWeight:800,letterSpacing:-0.3,boxShadow:SHADOW_SM}}>
+                <Paintbrush2 size={17} strokeWidth={2.5}/>
+                Start painting · {spW} × {spH}
+              </button>
+
+              {/* Resume */}
+              {recent.length>0&&(
+                <div style={{marginTop:isMobile?18:24,paddingTop:isMobile?14:18,borderTop:`1.5px dashed rgba(13,11,7,.2)`}}>
+                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>OR PICK UP WHERE YOU LEFT OFF</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:isMobile?6:8}}>
+                    {recent.map(g=>(
+                      <button key={g.id} onClick={()=>resumeFromGallery(g)} className="lift" title={`Continue “${g.name}”`}
+                        style={{border:BORDER,borderRadius:10,overflow:'hidden',background:WHITE,cursor:'pointer',padding:0,textAlign:'left',display:'flex',flexDirection:'column'}}>
+                        <div style={{aspectRatio:'4/3',width:'100%',background:CREAM,borderBottom:BORDER,position:'relative',overflow:'hidden'}}>
+                          <img src={g.dataUrl} alt="" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+                          {g.isAuto&&<span style={{position:'absolute',top:4,left:4,background:SAND,border:`1.5px solid ${DARK}`,borderRadius:4,fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,padding:'0 4px'}}>AUTO</span>}
+                        </div>
+                        <div style={{padding:isMobile?'4px 5px':'6px 8px',minWidth:0,width:'100%'}}>
+                          <div style={{fontSize:isMobile?9:10.5,fontWeight:700,color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.name}</div>
+                          <div style={{fontFamily:"'Space Mono',monospace",fontSize:7,color:MUTED,marginTop:1}}>{new Date(g.createdAt).toLocaleDateString([],{month:'short',day:'numeric'})}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
+        );
+      })()}
+
+      {/* ══ ONBOARDING TOUR ══════════════════════════════════════════════════ */}
+      <Tour steps={tourSteps} open={tourOpen} onClose={closeTour}/>
+
+      {/* ══ POP-UP PALETTE (right-click) ═════════════════════════════════════ */}
+      {popPal&&(()=>{
+        const R=96;
+        const ringColors=[...recentColors,...PIGMENTS.map(p=>p.rgb).filter(p=>!recentColors.some(c=>c.join()===p.join()))].slice(0,12);
+        const brushes=BRUSH_DEFS.filter(b=>b.type!=='eraser').slice(0,6);
+        const cx=Math.max(R+28,Math.min(window.innerWidth-R-28,popPal.x)),cy=Math.max(R+28,Math.min(window.innerHeight-R-28,popPal.y));
+        return(
+          <div style={{position:'fixed',inset:0,zIndex:700}} onPointerDown={()=>setPopPal(null)} onContextMenu={e=>{e.preventDefault();setPopPal(null);}}>
+            <div onPointerDown={e=>e.stopPropagation()} style={{position:'absolute',left:cx,top:cy,width:R*2+48,height:R*2+48,borderRadius:'50%',background:'rgba(255,255,255,.94)',border:BORDER,boxShadow:SHADOW,backdropFilter:'blur(6px)',animation:'palIn 260ms cubic-bezier(.34,1.56,.64,1) both',transform:'translate(-50%,-50%)'}}>
+              <div style={{position:'absolute',left:'50%',top:'50%',width:R*1.24,height:R*1.24,borderRadius:'50%',border:`1.5px dashed rgba(13,11,7,.18)`,transform:'translate(-50%,-50%)'}}/>
+              {ringColors.map((c,i)=>{const a=i/ringColors.length*Math.PI*2-Math.PI/2;const sel=c.join()===color.join();return(
+                <button key={i} className="pal-dot" aria-label={`Colour rgb ${c.join(' ')}`} onClick={()=>{applyColor(c);setPopPal(null);}}
+                  style={{left:`calc(50% + ${Math.cos(a)*R}px)`,top:`calc(50% + ${Math.sin(a)*R}px)`,width:sel?30:26,height:sel?30:26,borderRadius:'50%',background:`rgb(${c.join(',')})`,border:sel?`3px solid ${LIME}`:BORDER,boxShadow:sel?`0 0 0 2px ${DARK}`:'none',animationDelay:`${i*14}ms`,padding:0}}/>
+              );})}
+              {brushes.map((b,i)=>{const a=i/brushes.length*Math.PI*2-Math.PI/2+Math.PI/brushes.length;const r=R*.52;const sel=!selectedCustom&&!eraserMode&&brushType===b.type;return(
+                <button key={b.type} className="pal-dot" title={b.label} aria-label={b.label} onClick={()=>{setBrushType(b.type);setSelectedCustom(null);setEraserMode(false);setPopPal(null);}}
+                  style={{left:`calc(50% + ${Math.cos(a)*r}px)`,top:`calc(50% + ${Math.sin(a)*r}px)`,width:30,height:30,borderRadius:9,background:sel?LIME:WHITE,border:BORDER,color:DARK,display:'flex',alignItems:'center',justifyContent:'center',animationDelay:`${80+i*20}ms`,padding:0}}>
+                  <BrushIcon type={b.type} size={14}/>
+                </button>
+              );})}
+              <button className="pal-dot" aria-label="Open colour panel" title="Open colour panel [C]" onClick={()=>{setPopPal(null);setShowColorPanel(true);}}
+                style={{left:'50%',top:'50%',width:34,height:34,borderRadius:'50%',background:colorCss,border:BORDER,boxShadow:`0 0 0 3px ${WHITE}, 0 0 0 5px ${DARK}`,padding:0}}/>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══ BRUSH SIZE HUD ═══════════════════════════════════════════════════ */}
+      {sizeHud&&!showStartupPicker&&(
+        <div style={{position:'fixed',left:sideW+(window.innerWidth-sideW)/2,top:headerH+(window.innerHeight-headerH-animBottom)/2,zIndex:450,pointerEvents:'none',display:'flex',flexDirection:'column',alignItems:'center',gap:10,animation:'hudIn 140ms ease both'}}>
+          <div style={{width:Math.min(260,brushSize*zoom),height:Math.min(260,brushSize*zoom),borderRadius:'50%',border:`2px solid ${DARK}`,background:`rgba(${color.join(',')},.22)`,boxShadow:`0 0 0 2px ${WHITE}`}}/>
+          <span className="pill" style={{background:DARK,color:LIME}}>{brushSize} PX</span>
+        </div>
       )}
+
+      <Toaster position="bottom-center" offset={animBottom+14} gap={8} toastOptions={{
+        style:{background:DARK,color:WHITE,border:`2px solid ${DARK}`,borderRadius:12,boxShadow:`4px 4px 0 ${LIME}`,fontFamily:"'Space Grotesk',sans-serif",fontSize:13,fontWeight:700,padding:'12px 14px'},
+        descriptionClassName:'toast-desc',
+        actionButtonStyle:{background:LIME,color:DARK,fontFamily:"'Space Grotesk',sans-serif",fontWeight:800,fontSize:11,borderRadius:7,border:`1.5px solid ${DARK}`},
+      }}/>
 
     </>
   );
