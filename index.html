@@ -6,9 +6,20 @@
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>mepaint — paint that mixes like the real thing</title>
       <meta name="description" content="A browser painting studio with real pigment colour mixing, natural brushes, layers, animation and live collaboration." />
-      <meta name="theme-color" content="#EDE8DA" />
+      <meta name="theme-color" content="#F3F1EC" />
       <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-      <style>html, body { height: 100%; margin: 0; background: #EDE8DA; } #root { height: 100%; }</style>
+      <script>
+        // Resolve the theme before first paint (stored choice, else OS preference) — no flash
+        (function () {
+          var t = null;
+          try { t = localStorage.getItem('mepaint-theme'); } catch (e) {}
+          if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.dataset.theme = t;
+          document.documentElement.style.background = t === 'dark' ? '#141416' : '#F3F1EC';
+          document.querySelector('meta[name="theme-color"]').content = t === 'dark' ? '#141416' : '#F3F1EC';
+        })();
+      </script>
+      <style>html, body { height: 100%; margin: 0; background: var(--mp-bg, #F3F1EC); } #root { height: 100%; }</style>
     </head>
 
     <body>

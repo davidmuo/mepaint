@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
-import { DARK, LIME, WHITE, MUTED, SAND, BORDER, SHADOW, SANS, MONO } from './tokens';
+import { DARK, LIME, WHITE, MUTED, SAND, BORDER, SHADOW, SANS, MONO, ACCENT, ACCENT_INK, ON_ACCENT, LINE_STRONG, HERO } from './tokens';
 
 export interface TourStep {
   /** `data-tour` id(s) to spotlight — every visible match is unioned; omit for a centred card */
@@ -128,17 +128,17 @@ export function Tour({ steps, open, onClose, labels }: {
       {/* Spotlight: the giant spread shadow dims everything except the cut-out */}
       <div style={{
         position: 'absolute', left: sp.x, top: sp.y, width: sp.w, height: sp.h, borderRadius: centred ? 0 : 12,
-        boxShadow: `0 0 0 9999px rgba(13,11,7,${centred ? .62 : .55})`,
-        outline: centred ? 'none' : `2.5px solid ${LIME}`, outlineOffset: 0,
+        boxShadow: `0 0 0 9999px rgba(12,11,10,${centred ? .5 : .45})`,
+        outline: centred ? 'none' : `2px solid ${ACCENT}`, outlineOffset: 0,
         transition: `all 380ms ${ease}`, pointerEvents: 'none',
       }}>
-        {!centred && <div className="tour-pulse" style={{ position: 'absolute', inset: -2, borderRadius: 12, border: `2px solid ${LIME}` }}/>}
+        {!centred && <div className="tour-pulse" style={{ position: 'absolute', inset: -2, borderRadius: 12, border: `2px solid ${ACCENT}` }}/>}
       </div>
 
       <div ref={cardRef} key={idx} style={{
         position: 'absolute', left: card?.x ?? -9999, top: card?.y ?? -9999,
         width: centred ? Math.min(400, vw - 24) : Math.min(312, vw - 24),
-        background: WHITE, border: BORDER, borderRadius: 16, boxShadow: SHADOW, fontFamily: SANS, color: DARK,
+        background: WHITE, border: BORDER, borderRadius: 18, boxShadow: SHADOW, fontFamily: SANS, color: DARK,
         transition: `left 380ms ${ease}, top 380ms ${ease}`, animation: 'tourIn 260ms cubic-bezier(.34,1.56,.64,1)',
       }}>
         {arrow && (
@@ -151,11 +151,11 @@ export function Tour({ steps, open, onClose, labels }: {
           }}/>
         )}
 
-        {step.hero && <div style={{ background: DARK, borderRadius: '13px 13px 0 0', padding: '22px 20px 16px', display: 'flex', justifyContent: 'center', borderBottom: BORDER }}>{step.hero}</div>}
+        {step.hero && <div style={{ background: HERO, borderRadius: '17px 17px 0 0', padding: '24px 20px 18px', display: 'flex', justifyContent: 'center' }}>{step.hero}</div>}
 
         <div style={{ padding: centred ? '20px 22px 18px' : '16px 18px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: 1, background: LIME, border: BORDER, borderRadius: 100, padding: '2px 9px' }}>
+            <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 500, letterSpacing: .4, background: LIME, color: ACCENT_INK, borderRadius: 100, padding: '3px 9px' }}>
               {step.chip ?? (step.target ? `TIP ${tipNo}/${tipSteps}` : 'MEPAINT')}
             </span>
             <div style={{ flex: 1 }}/>
@@ -166,11 +166,11 @@ export function Tour({ steps, open, onClose, labels }: {
               </button>
             )}
           </div>
-          <h3 style={{ fontSize: centred ? 22 : 16, fontWeight: 800, letterSpacing: centred ? -.6 : -.3, lineHeight: 1.2, marginBottom: 6 }}>{step.title}</h3>
-          <div style={{ fontSize: 13, lineHeight: 1.55, color: '#4A453B', fontWeight: 500 }}>{step.body}</div>
+          <h3 style={{ fontSize: centred ? 22 : 16, fontWeight: 600, letterSpacing: centred ? -.6 : -.3, lineHeight: 1.2, marginBottom: 6 }}>{step.title}</h3>
+          <div style={{ fontSize: 13.5, lineHeight: 1.55, color: 'color-mix(in srgb,var(--mp-ink) 70%,transparent)', fontWeight: 400 }}>{step.body}</div>
           {step.keys && (
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 10 }}>
-              {step.keys.map(k => <kbd key={k} style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, background: SAND, border: `1.5px solid ${DARK}`, borderBottomWidth: 3, borderRadius: 6, padding: '2px 7px' }}>{k}</kbd>)}
+              {step.keys.map(k => <kbd key={k} style={{ fontFamily: MONO, fontSize: 10, fontWeight: 500, background: SAND, border: `1px solid ${LINE_STRONG}`, borderBottomWidth: 2, borderRadius: 6, padding: '2px 7px', color: DARK }}>{k}</kbd>)}
             </div>
           )}
 
@@ -178,7 +178,7 @@ export function Tour({ steps, open, onClose, labels }: {
             {step.target ? (
               <div style={{ display: 'flex', gap: 3, flex: 1 }} aria-hidden>
                 {steps.filter(s => s.target).map((_, i) => (
-                  <span key={i} style={{ height: 5, width: i === tipNo - 1 ? 16 : 5, borderRadius: 5, background: i < tipNo ? DARK : 'rgba(13,11,7,.15)', transition: `all 300ms ${ease}` }}/>
+                  <span key={i} style={{ height: 5, width: i === tipNo - 1 ? 16 : 5, borderRadius: 5, background: i < tipNo ? ACCENT : LINE_STRONG, transition: `all 300ms ${ease}` }}/>
                 ))}
               </div>
             ) : isFirst ? (
@@ -193,7 +193,7 @@ export function Tour({ steps, open, onClose, labels }: {
               </button>
             )}
             <button onClick={next} autoFocus
-              style={{ height: 34, padding: '0 14px', border: BORDER, borderRadius: 9, background: isFirst || isLast ? LIME : DARK, color: isFirst || isLast ? DARK : WHITE, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12, fontWeight: 700, boxShadow: isFirst || isLast ? `2px 2px 0 ${DARK}` : 'none' }}>
+              style={{ height: 34, padding: '0 14px', borderRadius: 10, background: isFirst || isLast ? ACCENT : DARK, color: isFirst || isLast ? ON_ACCENT : WHITE, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 600, border: 'none' }}>
               {isFirst ? (labels?.start ?? 'Show me around') : isLast ? (labels?.finish ?? 'Start painting') : 'Next'}
               <ArrowRight size={13} strokeWidth={2.4}/>
             </button>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import JSZip from 'jszip';
 import { pigmentMix, smudgeMix } from './components/pigment-mix';
-import { CREAM, WHITE, DARK, LIME, PINK, ACCENT, MUTED, SAND, BORDER, BR, SHADOW, SHADOW_SM } from './components/tokens';
+import { CREAM, WHITE, DARK, LIME, PINK, ACCENT, ACCENT_INK, ON_ACCENT, MUTED, SAND, LINE, LINE_STRONG, HERO, BORDER, BR, SHADOW, SHADOW_SM } from './components/tokens';
 import { Tour, type TourStep } from './components/Tour';
 import { ColorPicker } from './components/ColorPicker';
 import { MixDemo, MIX_COLORS } from './components/MixDemo';
@@ -9,7 +9,7 @@ import { Toaster, toast } from 'sonner';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import {
-  Music2, ImageIcon, HelpCircle, Undo2, Redo2, Trash2, Download, Compass,
+  Music2, ImageIcon, HelpCircle, Undo2, Redo2, Trash2, Download, Compass, Sun, Moon,
   Play, Pause, X, Upload, Blend,
   ChevronRight, Eye, EyeOff, ZoomIn, ZoomOut, Users,
   Pipette, Spline, Copy, Check, Link, Settings2, LayoutGrid,
@@ -477,6 +477,23 @@ export default function App() {
   const [mobileToolExpanded, setMobileToolExpanded] = useState(false);
   useEffect(()=>{const h=()=>{const m=window.innerWidth<768;setIsMobile(m);if(!m)setMobileDrawer(false);};window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h);},[]);
 
+  // ── Theme: follows the OS until the user picks one; index.html applies it before first paint
+  const [theme, setTheme] = useState<'light'|'dark'>(()=>document.documentElement.dataset.theme==='dark'?'dark':'light');
+  useEffect(()=>{
+    const root=document.documentElement;root.dataset.theme=theme;root.style.background='';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#141416':'#F3F1EC');
+  },[theme]);
+  useEffect(()=>{
+    const mq=matchMedia('(prefers-color-scheme: dark)');
+    const onChange=(e:MediaQueryListEvent)=>{let saved=null;try{saved=localStorage.getItem('mepaint-theme');}catch{}if(!saved)setTheme(e.matches?'dark':'light');};
+    mq.addEventListener('change',onChange);return()=>mq.removeEventListener('change',onChange);
+  },[]);
+  const toggleTheme=useCallback(()=>{
+    // Cross-fade colours only for an explicit switch, never on load
+    const root=document.documentElement;root.classList.add('theme-anim');setTimeout(()=>root.classList.remove('theme-anim'),320);
+    setTheme(t=>{const n=t==='dark'?'light':'dark';try{localStorage.setItem('mepaint-theme',n);}catch{}return n;});
+  },[]);
+
   // ── Onboarding tour (first visit only; replayable from Shortcuts)
   const [tourOpen, setTourOpen] = useState(false);
   const tourSeen = ()=>{try{return localStorage.getItem(TOUR_KEY)==='done';}catch{return true;}};
@@ -499,7 +516,7 @@ export default function App() {
   const colorCss=`rgb(${color.join(',')})`;
   const activeBrushLabel=selectedCustom?.name ?? BRUSH_DEFS.find(b=>b.type===brushType)?.label??'';
   const spaceHeld=ds.current.isSpaceHeld;
-  const sideW=isMobile?0:54;
+  const sideW=isMobile?0:62;
   const headerH=isMobile?42:48;
   const toolH=isMobile?56:76;
   const animBottom=workspace==='animate'?(isMobile?120:148):toolH;
@@ -1873,7 +1890,7 @@ export default function App() {
 
   // ── Onboarding tour script — mobile swaps the sidebar stops for the menu drawer
   const tourSteps:TourStep[]=[
-    {hero:<MixDemo size={150} stroke={WHITE}/>,chip:'WELCOME',title:'Paint that mixes like the real thing',
+    {hero:<MixDemo size={150} stroke="#fff"/>,chip:'WELCOME',title:'Paint that mixes like the real thing',
       body:<>In mepaint, colours blend like real pigment: blue and yellow make <b>green</b>, not muddy grey. Here's a 60-second tour.</>},
     {target:'canvas',title:'This is your canvas',
       body:isMobile?'Paint with your finger or a stylus. Zoom with the buttons up top, and drag the dark bar to move the canvas.'
@@ -1901,18 +1918,20 @@ export default function App() {
   // ── UI button helper — clean editorial style
   type BtnVariant = 'lime'|'dark'|'ghost'|'danger'|'default';
   const ibtn = (variant: BtnVariant = 'default', active = false): React.CSSProperties => {
-    const base: React.CSSProperties = {border:BORDER,borderRadius:BR,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all 90ms ease',flexShrink:0,fontFamily:"'Space Grotesk',sans-serif",fontWeight:700,fontSize:12,gap:5};
-    if (variant === 'lime')    return {...base, background:LIME, color:DARK};
+    const base: React.CSSProperties = {border:BORDER,borderRadius:BR,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all 120ms ease',flexShrink:0,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:600,fontSize:12,gap:5};
+    // 'lime' is the historical name for the primary call-to-action
+    if (variant === 'lime')    return {...base, background:ACCENT, color:ON_ACCENT, border:'1px solid transparent'};
     if (variant === 'dark')    return {...base, background:DARK, color:WHITE};
-    if (variant === 'danger')  return {...base, background:clearConfirm?PINK:WHITE, color:clearConfirm?WHITE:DARK};
+    if (variant === 'danger')  return {...base, background:clearConfirm?PINK:WHITE, color:clearConfirm?'#fff':DARK};
     if (variant === 'ghost')   return {...base, border:'none', background:'transparent', color:MUTED};
-    return {...base, background:active?LIME:WHITE, color:DARK};
+    return {...base, background:active?LIME:WHITE, color:active?ACCENT_INK:DARK};
   };
+  // Rail buttons are borderless; .sbtn supplies the hover fill, inline background only when active
   const sidebtn = (active = false): React.CSSProperties => ({
-    width: 38, height: 38, border: BORDER, borderRadius: BR, cursor: 'pointer',
+    width: 36, height: 36, border: 'none', borderRadius: 10, cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: active ? LIME : WHITE, color: DARK,
-    transition: 'all 120ms cubic-bezier(0.34,1.56,0.64,1)', flexShrink: 0, position: 'relative',
+    background: active ? LIME : undefined, color: active ? ACCENT_INK : DARK,
+    flexShrink: 0, position: 'relative',
   });
 
   // ─── RENDER ────────────────────────────────────────────────────────────────
@@ -1921,31 +1940,35 @@ export default function App() {
       <style>{`
         *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
         html,body,#root{width:100%;height:100%;overflow:hidden}
-        body{font-family:'Space Grotesk',system-ui,sans-serif;background:${CREAM};color:${DARK}}
-        input,textarea,select{font-family:'Space Grotesk',system-ui,sans-serif;color:${DARK}}
-        input[type=range]{-webkit-appearance:none;appearance:none;height:3px;border-radius:2px;outline:none;cursor:pointer;border:none;background:rgba(0,0,0,.12)}
-        input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:${WHITE};border:${BORDER};cursor:grab}
-        input[type=range]::-webkit-slider-thumb:active{cursor:grabbing;background:${LIME}}
-        .inp{background:${WHITE};border:${BORDER};border-radius:8px;color:${DARK};font-family:'Space Grotesk',sans-serif;font-size:13px;padding:9px 12px;outline:none;width:100%;transition:border-color 120ms}
-        .inp:focus{border-color:${ACCENT};box-shadow:0 0 0 2px rgba(58,81,216,.1)}
+        body{font-family:'Geist',system-ui,sans-serif;background:${CREAM};color:${DARK};-webkit-font-smoothing:antialiased}
+        input,textarea,select{font-family:'Geist',system-ui,sans-serif;color:${DARK}}
+        input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:4px;outline:none;cursor:pointer;border:none;background:var(--mp-track)}
+        input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#fff;border:none;box-shadow:0 0 0 1px rgba(0,0,0,.10),0 1px 4px rgba(0,0,0,.28);cursor:grab;transition:box-shadow 120ms ease}
+        input[type=range]::-webkit-slider-thumb:active{cursor:grabbing;box-shadow:0 0 0 5px color-mix(in srgb,var(--mp-accent) 24%,transparent),0 1px 4px rgba(0,0,0,.28)}
+        .inp{background:${SAND};border:${BORDER};border-radius:10px;color:${DARK};font-family:'Geist',system-ui,sans-serif;font-size:13px;padding:9px 12px;outline:none;width:100%;transition:border-color 120ms}
+        .inp:focus{background:${WHITE};border-color:${ACCENT};box-shadow:0 0 0 3px color-mix(in srgb,var(--mp-accent) 20%,transparent)}
         .inp::placeholder{color:${MUTED}}
-        .mono{font-family:'Space Mono',monospace}
-        .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:${BORDER};border-radius:100px;font-family:'Space Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.8px;flex-shrink:0}
-        .pop{background:${WHITE};border:${BORDER};border-radius:12px;box-shadow:${SHADOW_SM}}
-        .modal-bg{position:fixed;inset:0;background:rgba(13,11,7,.5);display:flex;align-items:center;justify-content:center;z-index:500;backdrop-filter:blur(4px)}
-        .modal{background:${WHITE};border:${BORDER};border-radius:16px;padding:28px 32px;width:480px;max-width:94vw;max-height:90vh;overflow-y:auto;box-shadow:${SHADOW}}
-        .lift{transition:transform 120ms cubic-bezier(.34,1.56,.64,1),box-shadow 120ms ease,background 120ms ease!important}
-        .lift:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:${SHADOW_SM}}
-        .lift:active:not(:disabled){transform:translate(1px,1px);box-shadow:none}
+        .mono{font-family:'Geist Mono',ui-monospace,monospace}
+        .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:${BORDER};border-radius:100px;font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;font-weight:600;letter-spacing:.3px;flex-shrink:0}
+        .pop{background:${WHITE};border:${BORDER};border-radius:16px;box-shadow:${SHADOW}}
+        .modal-bg{position:fixed;inset:0;background:var(--mp-scrim);display:flex;align-items:center;justify-content:center;z-index:500;backdrop-filter:blur(4px)}
+        .modal{background:${WHITE};border:${BORDER};border-radius:20px;padding:28px 32px;width:480px;max-width:94vw;max-height:90vh;overflow-y:auto;box-shadow:${SHADOW}}
+        .lift{transition:transform 160ms cubic-bezier(.22,1,.36,1),box-shadow 160ms ease,background 120ms ease!important}
+        .lift:hover:not(:disabled){transform:translateY(-1px);box-shadow:${SHADOW_SM}}
+        .lift:active:not(:disabled){transform:scale(.97);box-shadow:none}
+        .sbtn{background:transparent;transition:background 120ms ease,color 120ms ease}
+        .sbtn:hover{background:${SAND}}
+        .sbtn[data-on=true]{background:${LIME};color:${ACCENT_INK}!important}
+        .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:${CREAM};border:${BORDER}}
         .tipw{position:relative;display:flex}
-        .tip{position:absolute;left:calc(100% + 12px);top:50%;transform:translate(-4px,-50%);opacity:0;pointer-events:none;white-space:nowrap;background:${DARK};color:${WHITE};font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;padding:5px 6px 5px 10px;border-radius:7px;display:flex;align-items:center;gap:8px;transition:opacity 120ms ease,transform 160ms cubic-bezier(.22,1,.36,1);z-index:400}
+        .tip{position:absolute;left:calc(100% + 12px);top:50%;transform:translate(-4px,-50%);opacity:0;pointer-events:none;white-space:nowrap;background:${DARK};color:${WHITE};font-family:'Geist',system-ui,sans-serif;font-size:12px;font-weight:500;padding:6px 6px 6px 10px;border-radius:8px;box-shadow:${SHADOW_SM};display:flex;align-items:center;gap:8px;transition:opacity 120ms ease,transform 160ms cubic-bezier(.22,1,.36,1);z-index:400}
         .tip::before{content:'';position:absolute;left:-4px;top:50%;width:8px;height:8px;background:${DARK};transform:translateY(-50%) rotate(45deg)}
-        .tip kbd{font-family:'Space Mono',monospace;font-size:9px;font-weight:700;background:${LIME};color:${DARK};border-radius:4px;padding:1px 5px}
+        .tip kbd{font-family:'Geist Mono',ui-monospace,monospace;font-size:10px;font-weight:500;background:color-mix(in srgb,${WHITE} 16%,transparent);color:${WHITE};border-radius:5px;padding:1px 6px}
         .tip:not(:has(kbd)){padding-right:10px}
         .tipw:hover .tip{opacity:1;transform:translate(0,-50%);transition-delay:180ms}
-        input[type=range].hue-rail{height:12px;border-radius:7px;border:2px solid ${DARK};background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
-        input[type=range].hue-rail::-webkit-slider-thumb{width:16px;height:16px;border-width:2.5px}
-        .toast-desc{color:rgba(255,255,255,.62)!important;font-weight:500;font-size:12px}
+        input[type=range].hue-rail{height:12px;border-radius:7px;border:1px solid ${LINE_STRONG};background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
+        input[type=range].hue-rail::-webkit-slider-thumb{width:16px;height:16px;box-shadow:0 0 0 2px #fff,0 1px 5px rgba(0,0,0,.4)}
+        .toast-desc{color:color-mix(in srgb,${WHITE} 62%,transparent)!important;font-weight:400;font-size:12px}
         @keyframes tourIn{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
         @keyframes tourPulse{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.08)}}
         .tour-pulse{animation:tourPulse 1.6s cubic-bezier(.22,1,.36,1) infinite}
@@ -1958,13 +1981,15 @@ export default function App() {
         .anim-thumb{border-radius:7px;cursor:pointer;position:relative;transition:transform 150ms;border:${BORDER};overflow:hidden;flex-shrink:0}
         .anim-thumb:hover{transform:translateY(-2px)}
         .anim-thumb.sel{border-color:${ACCENT};border-width:2px}
-        .anim-thumb .rm{display:none;position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;background:${PINK};border:${BORDER};cursor:pointer;color:${WHITE};font-size:9px;font-weight:700;align-items:center;justify-content:center;z-index:2}
+        .anim-thumb .rm{display:none;position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;background:${PINK};border:none;cursor:pointer;color:#fff;font-size:9px;font-weight:700;align-items:center;justify-content:center;z-index:2}
         .anim-thumb:hover .rm{display:flex}
         .pig{cursor:pointer;border:${BORDER}!important;transition:transform 100ms cubic-bezier(0.34,1.56,0.64,1)}.pig:hover{transform:scale(1.4)!important}
-        .sb::-webkit-scrollbar{width:3px;height:3px}.sb::-webkit-scrollbar-track{background:transparent}.sb::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:2px}
+        .sb::-webkit-scrollbar{width:3px;height:3px}.sb::-webkit-scrollbar-track{background:transparent}.sb::-webkit-scrollbar-thumb{background:var(--mp-line-strong);border-radius:2px}
         .rov{position:absolute;inset:0;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 150ms}.rov:hover{background:rgba(0,0,0,.35)}.rov span{opacity:0;transition:opacity 150ms;color:#fff;font-size:11px;font-weight:700}.rov:hover span{opacity:1}
-        .ws-tab{padding:0 16px;height:36px;border:${BORDER};border-radius:8px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;transition:all 100ms}
-        button:active{transform:translate(1px,1px)}
+        .ws-tab{padding:0 13px;height:28px;border:none;border-radius:8px;cursor:pointer;font-family:'Geist',system-ui,sans-serif;font-size:12.5px;font-weight:500;display:flex;align-items:center;gap:6px;transition:all 160ms ease;background:transparent;color:${MUTED}}
+        .ws-tab:hover{color:${DARK}}
+        .ws-tab.on{background:var(--mp-raised);color:${DARK};box-shadow:${SHADOW_SM}}
+        button:not(.pal-dot):not(.lift):active:not(:disabled){transform:scale(.97)}
         @keyframes fi{from{opacity:0}to{opacity:1}}
         @keyframes su{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
         @keyframes sl{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
@@ -1973,15 +1998,15 @@ export default function App() {
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         @keyframes marchAnts{0%{opacity:1}50%{opacity:0.4}100%{opacity:1}}
         .layer-item{transition:background 80ms,border-color 80ms}
-        .layer-item:hover{background:rgba(0,0,0,.03)!important}
+        .layer-item:hover{background:${SAND}!important}
         [draggable]{cursor:grab}[draggable]:active{cursor:grabbing}
         @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
         @keyframes slideRight{from{transform:translateX(-100%);opacity:0}to{transform:translateX(0);opacity:1}}
         @keyframes fadeIn2{from{opacity:0}to{opacity:1}}
-        .mob-drawer-bg{position:fixed;inset:0;background:rgba(13,11,7,.4);z-index:500;animation:fadeIn2 120ms ease}
+        .mob-drawer-bg{position:fixed;inset:0;background:var(--mp-scrim);z-index:500;animation:fadeIn2 120ms ease}
         .mob-drawer{position:fixed;left:0;top:0;bottom:0;width:260px;background:${WHITE};border-right:${BORDER};z-index:510;animation:slideRight 200ms cubic-bezier(.4,.8,.6,1);overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:6px}
         @media(max-width:767px){
-          .ws-tab{padding:0 10px;height:30px;font-size:10px}
+          .ws-tab{padding:0 10px;height:26px;font-size:11px}
           .pill{padding:2px 7px;font-size:8px}
           .modal{padding:20px 18px;border-radius:14px}
         }
@@ -1991,37 +2016,164 @@ export default function App() {
       {/* ── BRUSH CURSOR — starts invisible, onPointerEnter/Leave toggles opacity via DOM */}
       {!isMobile&&!spaceHeld&&!isEyedropper&&!animPlaying&&!isTransformMode&&!(isLassoMode&&lassoPhase==='drawing')&&(
         <div ref={cursorDivRef} style={{position:'fixed',pointerEvents:'none',left:0,top:0,transform:'translate(-50%,-50%)',zIndex:9999,opacity:isOverCanvas?1:0,transition:'opacity 60ms ease'}}>
-          <div style={{width:brushSize*zoom,height:brushSize*zoom,borderRadius:brushType==='flat'?'4px':'50%',border:`1.5px solid ${DARK}`,background:`rgba(${color.join(',')},0.18)`,boxShadow:`0 0 0 1px rgba(255,255,255,.5)`}}/>
+          <div style={{width:brushSize*zoom,height:brushSize*zoom,borderRadius:brushType==='flat'?'4px':'50%',border:'1.5px solid rgba(20,18,15,.85)',background:`rgba(${color.join(',')},0.18)`,boxShadow:`0 0 0 1px rgba(255,255,255,.5)`}}/>
         </div>
       )}
 
-      <div style={{width:'100vw',height:'100vh',overflow:'hidden',position:'relative'}}>
+      <div style={{width:'100vw',height:'100vh',overflow:'hidden',position:'relative',backgroundColor:CREAM,backgroundImage:`radial-gradient(circle, var(--mp-dot) 1px, transparent 1px)`,backgroundSize:'24px 24px'}}>
 
         {/* ══ SIDEBAR ══════════════════════════════════════════════════════════ */}
-        <div style={{position:'fixed',left:0,top:0,bottom:0,width:54,background:CREAM,borderRight:BORDER,display:isMobile?'none':'flex',flexDirection:'column',alignItems:'center',padding:'10px 0',zIndex:200,gap:4}}>
+        <div style={{position:'fixed',left:8,top:headerH+8,bottom:animBottom,width:46,background:WHITE,border:BORDER,borderRadius:16,boxShadow:SHADOW_SM,display:isMobile?'none':'flex',flexDirection:'column',alignItems:'center',padding:'5px 0',zIndex:200,gap:2}}>
 
+          
+          {/* Sidebar tool buttons */}
+          {[
+            {icon:<Users size={15} strokeWidth={2}/>,active:showInvite,cb:()=>setShowInvite(p=>!p),hide:workspace==='animate',badge:isConnected,tip:'Collaborate'},
+            {icon:<Music2 size={15} strokeWidth={2}/>,active:showMusic,cb:()=>setShowMusic(p=>!p),tip:'Music'},
+            {icon:<ImageIcon size={15} strokeWidth={2}/>,active:showRef,cb:()=>setShowRef(p=>!p),tip:'Reference'},
+          ].filter((x:any)=>!x.hide).map((item:any)=>(
+            <Tip key={item.tip} label={item.badge?`${item.tip} · live`:item.tip}>
+              <button onClick={item.cb} className="sbtn" style={{...sidebtn(item.active)}} aria-label={item.tip} data-tour={item.tip==='Collaborate'?'collab':undefined}>
+                {item.icon}
+                {item.badge&&<span style={{position:'absolute',top:4,right:4,width:6,height:6,borderRadius:'50%',background:LIME,border:`2px solid ${WHITE}`,animation:'pulse 2s ease infinite'}}/>}
+              </button>
+            </Tip>
+          ))}
+
+          <div style={{width:22,height:1,background:LINE_STRONG,margin:'4px 0'}}/>
+
+          <Tip label="Transform" kbd="T"><button data-tour="tools" className="sbtn" aria-label="Transform" onClick={()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}}} style={{...sidebtn(isTransformMode)}}><Move size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Lasso select" kbd="L"><button className="sbtn" aria-label="Lasso select" onClick={()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}}} style={{...sidebtn(isLassoMode)}}><Lasso size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Brush library"><button ref={brushLibBtnRef} className="sbtn" aria-label="Brush library" onClick={()=>{setShowBrushLib(p=>!p);setShowBrushAdv(false);setShowSurface(false);setShowColorPanel(false);}} style={{...sidebtn(showBrushLib)}}>
+            {selectedCustom?<Paintbrush2 size={15} strokeWidth={2}/>:<BrushIcon type={brushType} size={15}/>}
+          </button></Tip>
+          <Tip label="Eyedropper" kbd="Alt+E"><button className="sbtn" aria-label="Eyedropper" onClick={()=>setIsEyedropper(p=>!p)} style={{...sidebtn(isEyedropper)}}><Pipette size={15} strokeWidth={2}/></button></Tip>
+          <Tip label={`Symmetry · ${symmetry}`}><button className="sbtn" aria-label="Symmetry" onClick={cycleSymmetry} style={{...sidebtn(symmetry!=='none')}}>
+            <Spline size={14} strokeWidth={2}/>
+            {symmetry!=='none'&&<span style={{position:'absolute',bottom:3,right:3,fontSize:6,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,lineHeight:1}}>{symmetry==='vertical'?'V':symmetry==='horizontal'?'H':'+'}</span>}
+          </button></Tip>
+          <Tip label="Canvas size"><button className="sbtn" aria-label="Canvas size" onClick={()=>setShowCanvasSize(p=>!p)} style={{...sidebtn(showCanvasSize)}}><Expand size={14} strokeWidth={2}/></button></Tip>
+          <Tip label={`Paper · ${currentSurface.label}`}><button data-tour="tools" ref={surfaceBtnRef} className="sbtn" aria-label="Paper surface" onClick={()=>{setShowSurface(p=>!p);setShowBrushAdv(false);setShowColorPanel(false);setShowBrushLib(false);}} style={{...sidebtn(showSurface)}}>
+            <div style={{width:18,height:18,borderRadius:5,background:`rgb(${currentSurface.paper.join(',')})`,display:'flex',alignItems:'center',justifyContent:'center'}}><SurfaceIcon type={surface} size={11}/></div>
+          </button></Tip>
+
+          <div style={{width:22,height:1,background:LINE_STRONG,margin:'4px 0'}}/>
+
+          <Tip label="Layers"><button data-tour="layers" ref={layerBtnRef} className="sbtn" aria-label="Layers" onClick={()=>{if(layerBtnRef.current){const r=layerBtnRef.current.getBoundingClientRect();const top=Math.min(r.top,window.innerHeight-400);setLayerPanelTop(Math.max(top,8));}setShowLayerPanel(p=>!p);}} style={sidebtn(showLayerPanel)}><Layers size={15} strokeWidth={2}/></button></Tip>
+          <Tip label="Gallery" kbd="G"><button className="sbtn" aria-label="Gallery" onClick={()=>setShowGallery(p=>!p)} style={sidebtn(showGallery)}><LayoutGrid size={15} strokeWidth={2}/></button></Tip>
+
+          <div style={{flex:1}}/>
+          <div style={{width:22,height:1,background:LINE_STRONG,marginBottom:4}}/>
+          <Tip label="Shortcuts & tour" kbd="?"><button className="sbtn" aria-label="Shortcuts and tour" onClick={()=>setShowHelp(p=>!p)} style={sidebtn(showHelp)}><HelpCircle size={14} strokeWidth={2}/></button></Tip>
+        </div>
+
+        {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
+        <div style={{position:'fixed',left:0,right:0,top:0,height:headerH,background:WHITE,borderBottom:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 10px':'0 16px',zIndex:150,gap:isMobile?6:12}}>
+
+          {/* Mobile hamburger */}
+          {isMobile&&<button data-tour="menu" aria-label="Menu" onClick={()=>setMobileDrawer(true)} style={{width:32,height:32,border:BORDER,borderRadius:8,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Menu size={15} strokeWidth={2}/></button>}
+
+          {/* Logo */}
+          <div style={{display:'flex',alignItems:'center',gap:7,flexShrink:0,userSelect:'none',paddingLeft:isMobile?0:4}}>
+            {!isMobile&&<MixDemo size={26} stroke={DARK} strokeWidth={1.5}/>}
+            <span style={{display:'flex',alignItems:'baseline'}}>
+            <span style={{fontFamily:"'Geist',system-ui,sans-serif",fontSize:isMobile?14:16,fontWeight:700,color:DARK,letterSpacing:-0.6,lineHeight:1}}>me</span>
+            <span style={{fontFamily:"'Geist',system-ui,sans-serif",fontSize:isMobile?14:16,fontWeight:400,color:MUTED,letterSpacing:-0.4,lineHeight:1}}>paint</span>
+            </span>
+          </div>
+
+          {!isMobile&&<div style={{width:1,height:20,background:LINE_STRONG,flexShrink:0}}/>}
+
+          {/* Workspace tabs */}
+          <div data-tour="workspace" className="seg" style={{flexShrink:0}}>
+            <button className={`ws-tab${workspace==='paint'?' on':''}`} onClick={()=>switchWorkspace('paint')}>
+              <Paintbrush2 size={12} strokeWidth={2}/>{!isMobile&&' Paint'}
+            </button>
+            <button className={`ws-tab${workspace==='animate'?' on':''}`} onClick={()=>switchWorkspace('animate')}>
+              <Film size={12} strokeWidth={2}/>{!isMobile&&' Animate'}
+            </button>
+          </div>
+
+          {!isMobile&&<div style={{width:1,height:20,background:LINE_STRONG,flexShrink:0}}/>}
+
+          {/* Status pills */}
+          <div style={{display:isMobile?'none':'flex',alignItems:'center',gap:5,flexShrink:0}}>
+            {workspace==='animate'?(
+              <>
+                <span className="pill" style={{background:LIME,color:DARK}}>F {animFrame+1} / {Math.max(1,animFrames.length)}</span>
+                <span className="pill" style={{background:SAND,color:MUTED}}>{animFps} FPS</span>
+                {animPlaying&&<span className="pill" style={{background:DARK,color:WHITE}}>PLAYING</span>}
+                {isRecording&&<span className="pill" style={{background:PINK,color:'#fff'}}>REC</span>}
+              </>
+            ):(
+              <>
+                <span className="pill" style={{background:LIME,color:DARK}}>{activeBrushLabel.toUpperCase()}</span>
+                {smudgeMode&&<span className="pill" style={{background:DARK,color:WHITE}}>SMUDGE</span>}
+                {isEyedropper&&<span className="pill" style={{background:ACCENT,color:ON_ACCENT}}>PICK</span>}
+                {isTransformMode&&<span className="pill" style={{background:DARK,color:LIME}}>{txPhase==='select'?'SELECT AREA':'TRANSFORM'}</span>}
+                {isLassoMode&&<span className="pill" style={{background:DARK,color:LIME}}>{lassoPhase==='painting'?'LASSO PAINT':'LASSO'}</span>}
+                {(flipH||flipV)&&<span className="pill" style={{background:SAND,color:MUTED}}>{flipH&&flipV?'H+V FLIP':flipH?'H FLIP':'V FLIP'}</span>}
+                {symmetry!=='none'&&<span className="pill" style={{background:SAND,color:MUTED}}>{symmetry.toUpperCase()} SYM</span>}
+                {stabilizer>0&&<span className="pill" style={{background:SAND,color:MUTED}}>SMOOTH {stabilizer}</span>}
+              </>
+            )}
+          </div>
+
+          <div style={{flex:1}}/>
+
+          {/* Canvas size display */}
+          {!isMobile&&<button onClick={()=>setShowCanvasSize(p=>!p)} style={{display:'flex',alignItems:'center',gap:5,background:SAND,border:`1px solid ${LINE_STRONG}`,borderRadius:7,padding:'4px 10px',cursor:'pointer',color:MUTED,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,letterSpacing:.5}}>
+            <Maximize size={9} strokeWidth={2}/>{canvasW}×{canvasH}
+          </button>}
+
+          {/* Flip buttons */}
+          {!isMobile&&[{icon:<FlipHIcon size={12}/>,active:flipH,cb:()=>setFlipH(p=>!p),tip:'Flip H [F]'},{icon:<FlipVIcon size={12}/>,active:flipV,cb:()=>setFlipV(p=>!p),tip:'Flip V [V]'}].map((b,i)=>(
+            <button key={i} onClick={b.cb} title={b.tip} style={{width:28,height:28,border:BORDER,borderRadius:7,background:b.active?LIME:SAND,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {b.icon}
+            </button>
+          ))}
+
+          {!isMobile&&<div style={{width:1,height:20,background:LINE_STRONG,flexShrink:0}}/>}
+
+          {/* Zoom */}
+          <div style={{display:'flex',alignItems:'center',gap:isMobile?2:3,flexShrink:0}}>
+            <button onClick={()=>zoomAt(window.innerWidth/2,window.innerHeight/2,.8)} style={{width:isMobile?24:26,height:isMobile?24:26,border:BORDER,background:SAND,borderRadius:6,cursor:'pointer',color:DARK,display:'flex',alignItems:'center',justifyContent:'center'}}><ZoomOut size={isMobile?10:11}/></button>
+            <button onClick={resetZoom} style={{background:SAND,border:`1px solid ${LINE_STRONG}`,cursor:'pointer',color:MUTED,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:isMobile?8:9,minWidth:isMobile?34:42,textAlign:'center',padding:isMobile?'3px 4px':'4px 6px',borderRadius:5,fontWeight:500}}>{Math.round(zoom*100)}%</button>
+            <button onClick={()=>zoomAt(window.innerWidth/2,window.innerHeight/2,1.25)} style={{width:isMobile?24:26,height:isMobile?24:26,border:BORDER,background:SAND,borderRadius:6,cursor:'pointer',color:DARK,display:'flex',alignItems:'center',justifyContent:'center'}}><ZoomIn size={isMobile?10:11}/></button>
+          </div>
+
+          {/* Online users in header */}
+          {!isMobile&&workspace==='paint'&&isConnected&&onlineUsers.length>0&&(
+            <div style={{display:'flex',gap:3,flexShrink:0}}>
+              {onlineUsers.filter(u=>u.uid!==myUid.current).slice(0,4).map(u=>(<div key={u.uid} title={u.name} style={{width:24,height:24,borderRadius:7,background:u.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',fontWeight:700,fontFamily:"'Geist',system-ui,sans-serif"}}>{u.name.charAt(0)}</div>))}
+            </div>
+          )}
+          {/* Theme toggle — light (soft) / dark (studio) */}
+          <button onClick={toggleTheme} aria-label={theme==='dark'?'Switch to light theme':'Switch to dark theme'} title={theme==='dark'?'Light theme':'Dark theme'} className="sbtn" style={{width:30,height:30,border:'none',borderRadius:9,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            {theme==='dark'?<Sun size={15} strokeWidth={2}/>:<Moon size={15} strokeWidth={2}/>}
+          </button>
           {/* Profile avatar — ALWAYS editable (guest or signed in) */}
-          <div ref={profilePopRef} style={{position:'relative',marginBottom:6}}>
+          <div ref={profilePopRef} style={{position:'relative',flexShrink:0}}>
             <button onClick={()=>{setEditNameVal(userName);setShowProfile(p=>!p);setShowAuthForm(false);setAuthError('');}}
-              style={{width:34,height:34,borderRadius:9,background:authUser?LIME:DARK,border:BORDER,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:800,color:authUser?DARK:WHITE,flexShrink:0,fontFamily:"'Space Grotesk',sans-serif"}}>
+              style={{width:30,height:30,borderRadius:'50%',background:authUser?ACCENT:DARK,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:600,color:authUser?ON_ACCENT:WHITE,flexShrink:0,fontFamily:"'Geist',system-ui,sans-serif"}}>
               {userName.charAt(0).toUpperCase()}
             </button>
-            {authUser&&<span style={{position:'absolute',bottom:-1,right:-1,width:7,height:7,borderRadius:'50%',background:'#22c55e',border:`1.5px solid ${CREAM}`}}/>}
+            {authUser&&<span style={{position:'absolute',bottom:-1,right:-1,width:7,height:7,borderRadius:'50%',background:'#22c55e',border:`2px solid ${WHITE}`}}/>}
 
             {showProfile&&(
-              <div style={{position:'absolute',left:46,top:0,width:270,zIndex:600,animation:'sl 180ms cubic-bezier(0.34,1.56,0.64,1)'}} className="pop">
+              <div style={{position:'absolute',right:0,top:40,width:280,zIndex:600,animation:'slu 180ms cubic-bezier(.22,1,.36,1)'}} className="pop">
                 <div style={{padding:'16px'}}>
 
                   {/* ── Name section — available to ALL users */}
                   <div style={{marginBottom:14,paddingBottom:14,borderBottom:BORDER}}>
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-                      <div style={{width:32,height:32,borderRadius:8,background:LIME,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:800,color:DARK,flexShrink:0,fontFamily:"'Space Grotesk',sans-serif"}}>{userName.charAt(0).toUpperCase()}</div>
+                      <div style={{width:32,height:32,borderRadius:8,background:LIME,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:600,color:DARK,flexShrink:0,fontFamily:"'Geist',system-ui,sans-serif"}}>{userName.charAt(0).toUpperCase()}</div>
                       <div>
                         <div style={{fontWeight:700,fontSize:13,color:DARK}}>{userName}</div>
-                        <div style={{fontSize:10,color:MUTED,fontFamily:"'Space Mono',monospace"}}>{authUser?authUser.email:'Guest'}</div>
+                        <div style={{fontSize:10,color:MUTED,fontFamily:"'Geist Mono',ui-monospace,monospace"}}>{authUser?authUser.email:'Guest'}</div>
                       </div>
                     </div>
-                    <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,letterSpacing:1,marginBottom:5,fontWeight:700}}>DISPLAY NAME</div>
+                    <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,letterSpacing:1,marginBottom:5,fontWeight:500}}>DISPLAY NAME</div>
                     <div style={{display:'flex',gap:6}}>
                       <input value={editNameVal} onChange={e=>setEditNameVal(e.target.value)} onKeyDown={e=>e.key==='Enter'&&saveDisplayName()} placeholder="Your name..." className="inp" style={{flex:1,fontSize:12,padding:'7px 10px'}}/>
                       <button onClick={saveDisplayName} style={{...ibtn('lime'),width:36,height:36,borderRadius:8}}>
@@ -2045,12 +2197,12 @@ export default function App() {
                         <div style={{animation:'slu 180ms ease'}}>
                           <div style={{display:'flex',gap:0,border:BORDER,borderRadius:8,overflow:'hidden',marginBottom:12}}>
                             {(['signin','signup'] as AuthMode[]).map(m=>(
-                              <button key={m} onClick={()=>{setAuthMode(m);setAuthError('');}} style={{flex:1,height:30,border:'none',borderRight:m==='signin'?BORDER:'none',background:authMode===m?DARK:SAND,color:authMode===m?WHITE:MUTED,cursor:'pointer',fontFamily:"'Space Grotesk',sans-serif",fontWeight:700,fontSize:10,letterSpacing:.3}}>
+                              <button key={m} onClick={()=>{setAuthMode(m);setAuthError('');}} style={{flex:1,height:30,border:'none',borderRight:m==='signin'?BORDER:'none',background:authMode===m?DARK:SAND,color:authMode===m?WHITE:MUTED,cursor:'pointer',fontFamily:"'Geist',system-ui,sans-serif",fontWeight:700,fontSize:10,letterSpacing:.3}}>
                                 {m==='signin'?'Sign In':'Sign Up'}
                               </button>
                             ))}
                           </div>
-                          {authError&&<div style={{background:`${PINK}18`,border:`1.5px solid ${PINK}`,borderRadius:7,padding:'7px 10px',marginBottom:10,fontSize:11,color:PINK,fontWeight:600}}>{authError}</div>}
+                          {authError&&<div style={{background:`color-mix(in srgb,${PINK} 10%,transparent)`,border:`1.5px solid ${PINK}`,borderRadius:7,padding:'7px 10px',marginBottom:10,fontSize:11,color:PINK,fontWeight:600}}>{authError}</div>}
                           {authMode==='signup'&&(
                             <div style={{position:'relative',marginBottom:7}}>
                               <User size={12} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:MUTED}} strokeWidth={2}/>
@@ -2078,130 +2230,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          <div style={{width:28,height:1.5,background:DARK,opacity:.15,marginBottom:2}}/>
-
-          {/* Sidebar tool buttons */}
-          {[
-            {icon:<Users size={15} strokeWidth={2}/>,active:showInvite,cb:()=>setShowInvite(p=>!p),hide:workspace==='animate',badge:isConnected,tip:'Collaborate'},
-            {icon:<Music2 size={15} strokeWidth={2}/>,active:showMusic,cb:()=>setShowMusic(p=>!p),tip:'Music'},
-            {icon:<ImageIcon size={15} strokeWidth={2}/>,active:showRef,cb:()=>setShowRef(p=>!p),tip:'Reference'},
-          ].filter((x:any)=>!x.hide).map((item:any)=>(
-            <Tip key={item.tip} label={item.badge?`${item.tip} · live`:item.tip}>
-              <button onClick={item.cb} className="lift" style={{...sidebtn(item.active),marginBottom:2}} aria-label={item.tip} data-tour={item.tip==='Collaborate'?'collab':undefined}>
-                {item.icon}
-                {item.badge&&<span style={{position:'absolute',top:4,right:4,width:6,height:6,borderRadius:'50%',background:LIME,border:`1.5px solid ${CREAM}`,animation:'pulse 2s ease infinite'}}/>}
-              </button>
-            </Tip>
-          ))}
-
-          <div style={{width:28,height:1.5,background:DARK,opacity:.15,margin:'4px 0'}}/>
-
-          <Tip label="Transform" kbd="T"><button data-tour="tools" className="lift" aria-label="Transform" onClick={()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}}} style={{...sidebtn(isTransformMode),marginBottom:2}}><Move size={15} strokeWidth={2}/></button></Tip>
-          <Tip label="Lasso select" kbd="L"><button className="lift" aria-label="Lasso select" onClick={()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}}} style={{...sidebtn(isLassoMode),marginBottom:2}}><Lasso size={15} strokeWidth={2}/></button></Tip>
-          <Tip label="Brush library"><button ref={brushLibBtnRef} className="lift" aria-label="Brush library" onClick={()=>{setShowBrushLib(p=>!p);setShowBrushAdv(false);setShowSurface(false);setShowColorPanel(false);}} style={{...sidebtn(showBrushLib),marginBottom:2}}>
-            {selectedCustom?<Paintbrush2 size={15} strokeWidth={2}/>:<BrushIcon type={brushType} size={15}/>}
-          </button></Tip>
-          <Tip label="Eyedropper" kbd="Alt+E"><button className="lift" aria-label="Eyedropper" onClick={()=>setIsEyedropper(p=>!p)} style={{...sidebtn(isEyedropper),marginBottom:2}}><Pipette size={15} strokeWidth={2}/></button></Tip>
-          <Tip label={`Symmetry · ${symmetry}`}><button className="lift" aria-label="Symmetry" onClick={cycleSymmetry} style={{...sidebtn(symmetry!=='none'),marginBottom:2}}>
-            <Spline size={14} strokeWidth={2}/>
-            {symmetry!=='none'&&<span style={{position:'absolute',bottom:3,right:3,fontSize:6,fontFamily:"'Space Mono',monospace",fontWeight:700,lineHeight:1}}>{symmetry==='vertical'?'V':symmetry==='horizontal'?'H':'+'}</span>}
-          </button></Tip>
-          <Tip label="Canvas size"><button className="lift" aria-label="Canvas size" onClick={()=>setShowCanvasSize(p=>!p)} style={{...sidebtn(showCanvasSize),marginBottom:2}}><Expand size={14} strokeWidth={2}/></button></Tip>
-          <Tip label={`Paper · ${currentSurface.label}`}><button data-tour="tools" ref={surfaceBtnRef} className="lift" aria-label="Paper surface" onClick={()=>{setShowSurface(p=>!p);setShowBrushAdv(false);setShowColorPanel(false);setShowBrushLib(false);}} style={{...sidebtn(showSurface),marginBottom:2}}>
-            <div style={{width:18,height:18,borderRadius:5,background:`rgb(${currentSurface.paper.join(',')})`,display:'flex',alignItems:'center',justifyContent:'center'}}><SurfaceIcon type={surface} size={11}/></div>
-          </button></Tip>
-
-          <div style={{width:28,height:1.5,background:DARK,opacity:.15,margin:'4px 0'}}/>
-
-          <Tip label="Layers"><button data-tour="layers" ref={layerBtnRef} className="lift" aria-label="Layers" onClick={()=>{if(layerBtnRef.current){const r=layerBtnRef.current.getBoundingClientRect();const top=Math.min(r.top,window.innerHeight-400);setLayerPanelTop(Math.max(top,8));}setShowLayerPanel(p=>!p);}} style={sidebtn(showLayerPanel)}><Layers size={15} strokeWidth={2}/></button></Tip>
-          <Tip label="Gallery" kbd="G"><button className="lift" aria-label="Gallery" onClick={()=>setShowGallery(p=>!p)} style={sidebtn(showGallery)}><LayoutGrid size={15} strokeWidth={2}/></button></Tip>
-
-          <div style={{flex:1}}/>
-          <div style={{width:28,height:1.5,background:DARK,opacity:.15,marginBottom:6}}/>
-          <Tip label="Shortcuts & tour" kbd="?"><button className="lift" aria-label="Shortcuts and tour" onClick={()=>setShowHelp(p=>!p)} style={sidebtn(showHelp)}><HelpCircle size={14} strokeWidth={2}/></button></Tip>
-        </div>
-
-        {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
-        <div style={{position:'fixed',left:sideW,right:0,top:0,height:headerH,background:WHITE,borderBottom:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 10px':'0 16px',zIndex:150,gap:isMobile?6:12}}>
-
-          {/* Mobile hamburger */}
-          {isMobile&&<button data-tour="menu" aria-label="Menu" onClick={()=>setMobileDrawer(true)} style={{width:32,height:32,border:BORDER,borderRadius:8,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Menu size={15} strokeWidth={2}/></button>}
-
-          {/* Logo */}
-          <div style={{display:'flex',alignItems:'baseline',gap:0,flexShrink:0,userSelect:'none'}}>
-            <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:isMobile?13:16,fontWeight:800,color:DARK,letterSpacing:-0.8,lineHeight:1}}>me</span>
-            <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:isMobile?13:16,fontWeight:400,color:MUTED,letterSpacing:-0.4,lineHeight:1}}>paint</span>
-          </div>
-
-          {!isMobile&&<div style={{width:1,height:22,background:DARK,opacity:.12,flexShrink:0}}/>}
-
-          {/* Workspace tabs */}
-          <div data-tour="workspace" style={{display:'flex',gap:4,flexShrink:0}}>
-            <button className="ws-tab" onClick={()=>switchWorkspace('paint')}
-              style={{background:workspace==='paint'?DARK:SAND,color:workspace==='paint'?WHITE:MUTED,border:workspace==='paint'?BORDER:`1.5px solid ${SAND}`}}>
-              <Paintbrush2 size={12} strokeWidth={2}/>{!isMobile&&' Paint'}
-            </button>
-            <button className="ws-tab" onClick={()=>switchWorkspace('animate')}
-              style={{background:workspace==='animate'?LIME:SAND,color:workspace==='animate'?DARK:MUTED,border:workspace==='animate'?BORDER:`1.5px solid ${SAND}`}}>
-              <Film size={12} strokeWidth={2}/>{!isMobile&&' Animate'}
-            </button>
-          </div>
-
-          {!isMobile&&<div style={{width:1,height:22,background:DARK,opacity:.12,flexShrink:0}}/>}
-
-          {/* Status pills */}
-          <div style={{display:isMobile?'none':'flex',alignItems:'center',gap:5,flexShrink:0}}>
-            {workspace==='animate'?(
-              <>
-                <span className="pill" style={{background:LIME,color:DARK}}>F {animFrame+1} / {Math.max(1,animFrames.length)}</span>
-                <span className="pill" style={{background:SAND,color:MUTED}}>{animFps} FPS</span>
-                {animPlaying&&<span className="pill" style={{background:DARK,color:WHITE}}>PLAYING</span>}
-                {isRecording&&<span className="pill" style={{background:PINK,color:WHITE}}>REC</span>}
-              </>
-            ):(
-              <>
-                <span className="pill" style={{background:LIME,color:DARK}}>{activeBrushLabel.toUpperCase()}</span>
-                {smudgeMode&&<span className="pill" style={{background:DARK,color:WHITE}}>SMUDGE</span>}
-                {isEyedropper&&<span className="pill" style={{background:ACCENT,color:WHITE}}>PICK</span>}
-                {isTransformMode&&<span className="pill" style={{background:DARK,color:LIME}}>{txPhase==='select'?'SELECT AREA':'TRANSFORM'}</span>}
-                {isLassoMode&&<span className="pill" style={{background:DARK,color:LIME}}>{lassoPhase==='painting'?'LASSO PAINT':'LASSO'}</span>}
-                {(flipH||flipV)&&<span className="pill" style={{background:SAND,color:MUTED}}>{flipH&&flipV?'H+V FLIP':flipH?'H FLIP':'V FLIP'}</span>}
-                {symmetry!=='none'&&<span className="pill" style={{background:SAND,color:MUTED}}>{symmetry.toUpperCase()} SYM</span>}
-                {stabilizer>0&&<span className="pill" style={{background:SAND,color:MUTED}}>SMOOTH {stabilizer}</span>}
-              </>
-            )}
-          </div>
-
-          <div style={{flex:1}}/>
-
-          {/* Canvas size display */}
-          {!isMobile&&<button onClick={()=>setShowCanvasSize(p=>!p)} style={{display:'flex',alignItems:'center',gap:5,background:SAND,border:`1.5px solid ${DARK}`,borderRadius:7,padding:'4px 10px',cursor:'pointer',color:MUTED,fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:.5}}>
-            <Maximize size={9} strokeWidth={2}/>{canvasW}×{canvasH}
-          </button>}
-
-          {/* Flip buttons */}
-          {!isMobile&&[{icon:<FlipHIcon size={12}/>,active:flipH,cb:()=>setFlipH(p=>!p),tip:'Flip H [F]'},{icon:<FlipVIcon size={12}/>,active:flipV,cb:()=>setFlipV(p=>!p),tip:'Flip V [V]'}].map((b,i)=>(
-            <button key={i} onClick={b.cb} title={b.tip} style={{width:28,height:28,border:BORDER,borderRadius:7,background:b.active?LIME:SAND,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              {b.icon}
-            </button>
-          ))}
-
-          {!isMobile&&<div style={{width:1,height:22,background:DARK,opacity:.12,flexShrink:0}}/>}
-
-          {/* Zoom */}
-          <div style={{display:'flex',alignItems:'center',gap:isMobile?2:3,flexShrink:0}}>
-            <button onClick={()=>zoomAt(window.innerWidth/2,window.innerHeight/2,.8)} style={{width:isMobile?24:26,height:isMobile?24:26,border:BORDER,background:SAND,borderRadius:6,cursor:'pointer',color:DARK,display:'flex',alignItems:'center',justifyContent:'center'}}><ZoomOut size={isMobile?10:11}/></button>
-            <button onClick={resetZoom} style={{background:SAND,border:`1.5px solid ${DARK}`,cursor:'pointer',color:MUTED,fontFamily:"'Space Mono',monospace",fontSize:isMobile?8:9,minWidth:isMobile?34:42,textAlign:'center',padding:isMobile?'3px 4px':'4px 6px',borderRadius:5,fontWeight:700}}>{Math.round(zoom*100)}%</button>
-            <button onClick={()=>zoomAt(window.innerWidth/2,window.innerHeight/2,1.25)} style={{width:isMobile?24:26,height:isMobile?24:26,border:BORDER,background:SAND,borderRadius:6,cursor:'pointer',color:DARK,display:'flex',alignItems:'center',justifyContent:'center'}}><ZoomIn size={isMobile?10:11}/></button>
-          </div>
-
-          {/* Online users in header */}
-          {!isMobile&&workspace==='paint'&&isConnected&&onlineUsers.length>0&&(
-            <div style={{display:'flex',gap:3,flexShrink:0}}>
-              {onlineUsers.filter(u=>u.uid!==myUid.current).slice(0,4).map(u=>(<div key={u.uid} title={u.name} style={{width:24,height:24,borderRadius:7,background:u.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:WHITE,fontWeight:700,fontFamily:"'Space Grotesk',sans-serif"}}>{u.name.charAt(0)}</div>))}
-            </div>
-          )}
         </div>
 
         {/* ══ WORKSPACE + CANVAS ═══════════════════════════════════════════════ */}
@@ -2209,23 +2237,22 @@ export default function App() {
         <div ref={containerRef} style={{
           position:'fixed',left:sideW,top:headerH,right:0,bottom:animBottom,
           overflow:'hidden',zIndex:10,touchAction:'none',
-          backgroundImage:`radial-gradient(circle, rgba(13,11,7,.08) 1px, transparent 1px)`,
-          backgroundSize:'24px 24px',backgroundColor:CREAM,
+
           cursor:(isLassoMode&&lassoPhase==='drawing')?`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cellipse cx='13' cy='10' rx='9' ry='7' fill='none' stroke='%230D0B07' stroke-width='2.2'/%3E%3Cpath d='M20 15 L20 24 M17.5 21.5 L20 24 L22.5 21.5' fill='none' stroke='%230D0B07' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 13 10, crosshair`:(isTransformMode&&txPhase==='select')?`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22'%3E%3Crect x='1' y='1' width='20' height='20' rx='1.5' fill='none' stroke='%230D0B07' stroke-width='1.5' stroke-dasharray='3.5 2'/%3E%3Cline x1='11' y1='3' x2='11' y2='19' stroke='%230D0B07' stroke-width='1.2'/%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%230D0B07' stroke-width='1.2'/%3E%3C/svg%3E") 11 11, crosshair`:isEyedropper?'crosshair':spaceHeld?'grab':'default'}}>
 
           {/* Pan/zoom wrapper — the canvas panel floats directly inside the workspace */}
           <div style={{position:'absolute',top:0,left:0,transformOrigin:'0 0',transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,willChange:'transform'}}>
 
             {/* Single floating canvas panel: drag handle + drawing canvas, tightly fitted */}
-            <div data-tour="canvas" style={{display:'inline-flex',flexDirection:'column',border:BORDER,borderRadius:10,overflow:'hidden',verticalAlign:'top',boxShadow:`0 1px 0 ${DARK}, 0 18px 40px -18px rgba(13,11,7,.35)`}}>
+            <div data-tour="canvas" style={{display:'inline-flex',flexDirection:'column',borderRadius:12,overflow:'hidden',verticalAlign:'top',boxShadow:'var(--mp-canvas-shadow)',outline:`1px solid ${LINE}`}}>
 
               {/* Drag handle — grab here to reposition canvas */}
-              <div onMouseDown={startCanvasDrag} style={{height:isMobile?20:24,background:DARK,display:'flex',alignItems:'center',padding:'0 8px',cursor:'move',flexShrink:0,gap:6,userSelect:'none'}}>
-                <GripVertical size={isMobile?10:12} color="rgba(255,255,255,.5)" strokeWidth={2}/>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:isMobile?6:7.5,color:'rgba(255,255,255,.55)',fontWeight:700,letterSpacing:1.2,flex:1}}>{isMobile?'DRAG TO MOVE':'CANVAS — DRAG TO MOVE'}</span>
+              <div onMouseDown={startCanvasDrag} style={{height:isMobile?20:24,background:WHITE,display:'flex',alignItems:'center',padding:'0 8px',cursor:'move',flexShrink:0,gap:6,userSelect:'none',borderBottom:BORDER}}>
+                <GripVertical size={isMobile?10:12} color="var(--mp-muted)" strokeWidth={2}/>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:isMobile?7:8.5,color:MUTED,fontWeight:500,letterSpacing:.4,flex:1}}>{isMobile?'Drag to move':'Canvas · drag to move'}</span>
                 <button onClick={fitCanvas} title="Fit canvas to screen [0]"
-                  style={{background:'rgba(255,255,255,.08)',border:'none',cursor:'pointer',color:'rgba(255,255,255,.4)',display:'flex',alignItems:'center',padding:'2px 5px',borderRadius:4,gap:3}}>
-                  <RotateCcw size={8} strokeWidth={2}/><span style={{fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,letterSpacing:.5}}>FIT</span>
+                  className="sbtn" style={{border:'none',cursor:'pointer',color:MUTED,display:'flex',alignItems:'center',padding:'2px 6px',borderRadius:5,gap:3}}>
+                  <RotateCcw size={8} strokeWidth={2}/><span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.3}}>Fit</span>
                 </button>
               </div>
 
@@ -2248,14 +2275,14 @@ export default function App() {
                     return(
                       <>
                         <svg style={{position:'absolute',inset:0,width:canvasW,height:canvasH,pointerEvents:'none',overflow:'visible',zIndex:20}}>
-                          <path d={d} fill="rgba(196,255,69,0.07)" stroke="rgba(13,11,7,0.4)" strokeWidth={sw*2} strokeLinejoin="round" strokeLinecap="round"/>
-                          <path d={d} fill="none" stroke={LIME} strokeWidth={sw*1.5} strokeLinejoin="round" strokeLinecap="round"/>
-                          <circle cx={lassoPath[0].x} cy={lassoPath[0].y} r={Math.max(2,4/zoom)} fill={LIME} stroke={DARK} strokeWidth={sw}/>
+                          <path d={d} fill="color-mix(in srgb,var(--mp-accent) 9%,transparent)" stroke="rgba(13,11,7,0.4)" strokeWidth={sw*2} strokeLinejoin="round" strokeLinecap="round"/>
+                          <path d={d} fill="none" stroke={ACCENT} strokeWidth={sw*1.5} strokeLinejoin="round" strokeLinecap="round"/>
+                          <circle cx={lassoPath[0].x} cy={lassoPath[0].y} r={Math.max(2,4/zoom)} fill={ACCENT} stroke="#1E1C19" strokeWidth={sw}/>
                         </svg>
                         {/* Lasso paint action bar */}
                         <div style={{position:'absolute',left:minX,top:Math.max(0,minY-38),pointerEvents:'auto',zIndex:30,display:'flex',gap:4}}>
-                          <button onClick={()=>{lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';commitLassoSelRef.current();}} style={{height:26,padding:'0 10px',border:BORDER,borderRadius:7,background:DARK,color:LIME,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:.4,display:'flex',alignItems:'center',gap:4}}><Move size={9} strokeWidth={2.5}/>TRANSFORM</button>
-                          <button onClick={exitLassoPaint} style={{height:26,padding:'0 10px',border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:.4,display:'flex',alignItems:'center',gap:4}}><Check size={9} strokeWidth={2.5}/>DONE</button>
+                          <button onClick={()=>{lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';commitLassoSelRef.current();}} style={{height:26,padding:'0 10px',border:BORDER,borderRadius:7,background:DARK,color:LIME,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.4,display:'flex',alignItems:'center',gap:4}}><Move size={9} strokeWidth={2.5}/>TRANSFORM</button>
+                          <button onClick={exitLassoPaint} style={{height:26,padding:'0 10px',border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.4,display:'flex',alignItems:'center',gap:4}}><Check size={9} strokeWidth={2.5}/>DONE</button>
                           <button onClick={()=>{lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';setLassoPath([]);lassoPathRef.current=[];setIsLassoMode(false);isLassoRef.current=false;}} style={{height:26,padding:'0 8px',border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center'}}><X size={9} strokeWidth={2.5}/></button>
                         </div>
                       </>
@@ -2264,15 +2291,15 @@ export default function App() {
                   return(
                     <svg style={{position:'absolute',inset:0,width:canvasW,height:canvasH,pointerEvents:'none',overflow:'visible',zIndex:20}}>
                       {/* Shadow stroke for contrast on light areas */}
-                      <path d={d} fill="rgba(196,255,69,0.12)" stroke="rgba(13,11,7,0.5)" strokeWidth={sw*2.5} strokeLinejoin="round" strokeLinecap="round" fillRule="evenodd"/>
+                      <path d={d} fill="color-mix(in srgb,var(--mp-accent) 14%,transparent)" stroke="rgba(13,11,7,0.5)" strokeWidth={sw*2.5} strokeLinejoin="round" strokeLinecap="round" fillRule="evenodd"/>
                       {/* Lime dashed stroke */}
-                      <path d={d} fill="rgba(196,255,69,0.12)" stroke={LIME} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={`${5/zoom} ${3/zoom}`}/>
+                      <path d={d} fill="color-mix(in srgb,var(--mp-accent) 14%,transparent)" stroke={ACCENT} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={`${5/zoom} ${3/zoom}`}/>
                       {/* Closing line indicator */}
                       {lassoPath.length>2&&(
-                        <line x1={lassoPath[lassoPath.length-1].x} y1={lassoPath[lassoPath.length-1].y} x2={lassoPath[0].x} y2={lassoPath[0].y} stroke={LIME} strokeWidth={sw*0.6} strokeDasharray={`${3/zoom} ${3/zoom}`} opacity={0.5}/>
+                        <line x1={lassoPath[lassoPath.length-1].x} y1={lassoPath[lassoPath.length-1].y} x2={lassoPath[0].x} y2={lassoPath[0].y} stroke={ACCENT} strokeWidth={sw*0.6} strokeDasharray={`${3/zoom} ${3/zoom}`} opacity={0.5}/>
                       )}
                       {/* Start point dot */}
-                      <circle cx={lassoPath[0].x} cy={lassoPath[0].y} r={Math.max(2,4/zoom)} fill={LIME} stroke={DARK} strokeWidth={sw}/>
+                      <circle cx={lassoPath[0].x} cy={lassoPath[0].y} r={Math.max(2,4/zoom)} fill={ACCENT} stroke="#1E1C19" strokeWidth={sw}/>
                     </svg>
                   );
                 })()}
@@ -2289,7 +2316,7 @@ export default function App() {
                   const hCursor=(id:string)=>{if(id==='nw'||id==='se') return 'nwse-resize';if(id==='ne'||id==='sw') return 'nesw-resize';if(id==='n'||id==='s') return 'ns-resize';return 'ew-resize';};
                   return(
                     <div style={{position:'absolute',left:nr.x,top:nr.y,width:nr.w,height:nr.h,
-                      border:txPhase==='select'?`1.5px dashed ${DARK}`:`1.5px solid ${LIME}`,
+                      border:txPhase==='select'?'1.5px dashed rgba(20,18,15,.8)':`1.5px solid ${ACCENT}`,
                       pointerEvents:txPhase==='active'?'auto':'none',cursor:'move',zIndex:20,boxSizing:'border-box'}}
                       onPointerDown={txPhase==='active'?(e)=>{e.stopPropagation();txDsRef.current={active:true,type:'moving',handle:'move',startCX:e.clientX,startCY:e.clientY,startRect:{...txRectRef.current!}};}:undefined}>
                       {/* Preview image */}
@@ -2300,15 +2327,15 @@ export default function App() {
                       {txPhase==='select'&&<div style={{position:'absolute',inset:0,border:`1.5px dashed ${WHITE}`,animation:'marchAnts 0.4s linear infinite',pointerEvents:'none'}}/>}
                       {/* Corner + edge handles */}
                       {handles.map(h=>(
-                        <div key={h.id} style={{position:'absolute',left:h.cx,top:h.cy,width:HS,height:HS,background:WHITE,border:`1.5px solid ${LIME}`,borderRadius:2,cursor:hCursor(h.id),zIndex:21}}
+                        <div key={h.id} style={{position:'absolute',left:h.cx,top:h.cy,width:HS,height:HS,background:WHITE,border:`1.5px solid ${ACCENT}`,borderRadius:2,cursor:hCursor(h.id),zIndex:21}}
                           onPointerDown={(e)=>{e.stopPropagation();e.preventDefault();txDsRef.current={active:true,type:'resizing',handle:h.id,startCX:e.clientX,startCY:e.clientY,startRect:{...txRectRef.current!}};}}/>
                       ))}
                       {/* Action bar */}
                       {txPhase==='active'&&(
                         <div style={{position:'absolute',top:'100%',left:0,marginTop:8,display:'flex',gap:4,pointerEvents:'auto',zIndex:30}}>
-                          <button onClick={applyTransform} style={{height:28,padding:'0 12px',border:BORDER,borderRadius:7,background:LIME,color:DARK,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:.3,display:'flex',alignItems:'center',gap:5}}>
+                          <button onClick={applyTransform} style={{height:28,padding:'0 12px',border:BORDER,borderRadius:7,background:LIME,color:DARK,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,letterSpacing:.3,display:'flex',alignItems:'center',gap:5}}>
                             <Check size={10} strokeWidth={2.5}/>APPLY</button>
-                          <button onClick={cancelTransform} style={{height:28,padding:'0 12px',border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:.3,display:'flex',alignItems:'center',gap:5}}>
+                          <button onClick={cancelTransform} style={{height:28,padding:'0 12px',border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,letterSpacing:.3,display:'flex',alignItems:'center',gap:5}}>
                             <X size={10} strokeWidth={2.5}/>CANCEL</button>
                         </div>
                       )}
@@ -2321,15 +2348,15 @@ export default function App() {
           </div>
 
           {/* Remote cursors — positioned in workspace space */}
-          {Array.from(remoteCursors.entries()).map(([uid,cursor])=>{const sx=cursor.x*zoom+pan.x,sy=cursor.y*zoom+pan.y+24*zoom;if(sx<-20||sy<-20||sx>8000||sy>8000) return null;return(<div key={uid} style={{position:'absolute',left:sx,top:sy,transform:'translate(-2px,-2px)',pointerEvents:'none',zIndex:50}}><div style={{width:10,height:10,borderRadius:'50%',background:cursor.color,border:`1.5px solid ${DARK}`}}/><div style={{position:'absolute',top:13,left:4,whiteSpace:'nowrap',background:cursor.color,color:WHITE,fontSize:9,fontFamily:"'Space Grotesk',sans-serif",fontWeight:700,padding:'2px 6px',borderRadius:4,border:BORDER}}>{cursor.name}</div></div>);})}
+          {Array.from(remoteCursors.entries()).map(([uid,cursor])=>{const sx=cursor.x*zoom+pan.x,sy=cursor.y*zoom+pan.y+24*zoom;if(sx<-20||sy<-20||sx>8000||sy>8000) return null;return(<div key={uid} style={{position:'absolute',left:sx,top:sy,transform:'translate(-2px,-2px)',pointerEvents:'none',zIndex:50}}><div style={{width:10,height:10,borderRadius:'50%',background:cursor.color,border:`1px solid ${LINE_STRONG}`}}/><div style={{position:'absolute',top:13,left:4,whiteSpace:'nowrap',background:cursor.color,color:'#fff',fontSize:9,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:700,padding:'2px 6px',borderRadius:4,border:BORDER}}>{cursor.name}</div></div>);})}
 
         </div>{/* end workspace */}
 
         {/* ══ ANIMATION STRIP ══════════════════════════════════════════════════ */}
         {workspace==='animate'&&(
-          <div style={{position:'fixed',left:sideW,right:0,bottom:toolH,height:isMobile?64:72,background:SAND,borderTop:BORDER,borderBottom:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 6px':'0 12px',gap:isMobile?4:8,zIndex:148,animation:'slu 280ms ease'}}>
+          <div style={{position:'fixed',left:isMobile?6:8,right:isMobile?6:8,bottom:toolH,height:isMobile?58:64,background:WHITE,border:BORDER,borderRadius:16,boxShadow:SHADOW_SM,display:'flex',alignItems:'center',padding:isMobile?'0 6px':'0 10px',gap:isMobile?4:8,zIndex:148,animation:'slu 280ms ease'}}>
 
-            <button onClick={()=>{setShowOnion(p=>{const n=!p;showOnionRef.current=n;updateOnionSkin(animFrameRef.current);return n;});}} style={{...ibtn('default',showOnion),width:40,height:52,borderRadius:9,flexDirection:'column',gap:2,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.5}}>
+            <button onClick={()=>{setShowOnion(p=>{const n=!p;showOnionRef.current=n;updateOnionSkin(animFrameRef.current);return n;});}} style={{...ibtn('default',showOnion),width:40,height:52,borderRadius:9,flexDirection:'column',gap:2,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",letterSpacing:.5}}>
               <Eye size={12} strokeWidth={2}/>{showOnion?'ON':'OFF'}
             </button>
 
@@ -2339,14 +2366,14 @@ export default function App() {
               {animFrames.map((frame,i)=>(
                 <div key={i} className={`anim-thumb${i===animFrame?' sel':''}`} onClick={()=>{if(animPlaying) return;saveCurrentAnimFrame();loadAnimFrame(i);}} style={{width:68,height:50,background:WHITE}}>
                   <img src={frame} alt={`F${i+1}`} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
-                  <div style={{position:'absolute',bottom:2,left:2,background:DARK,color:WHITE,fontFamily:"'Space Mono',monospace",fontSize:7,padding:'1px 4px',borderRadius:3}}>{i+1}</div>
+                  <div style={{position:'absolute',bottom:2,left:2,background:DARK,color:WHITE,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,padding:'1px 4px',borderRadius:3}}>{i+1}</div>
                   {animFrames.length>1&&!animPlaying&&<button className="rm" onClick={e=>{e.stopPropagation();deleteAnimFrame(i);}}>×</button>}
                 </div>
               ))}
               {!animPlaying&&(
                 <div style={{display:'flex',gap:4,flexShrink:0}}>
                   {[{label:'BLANK',icon:<Plus size={12}/>,cb:()=>addAnimFrame(false)},{label:'DUP',icon:<Copy size={10}/>,cb:()=>addAnimFrame(true)}].map(({label,icon,cb})=>(
-                    <button key={label} onClick={cb} style={{width:44,height:50,border:`1.5px dashed ${DARK}`,borderRadius:8,background:'transparent',color:MUTED,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,fontSize:8,fontFamily:"'Space Mono',monospace",fontWeight:700,letterSpacing:.3}}>
+                    <button key={label} onClick={cb} style={{width:44,height:50,border:`1.5px dashed ${LINE_STRONG}`,borderRadius:8,background:'transparent',color:MUTED,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,fontSize:8,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,letterSpacing:.3}}>
                       {icon}{label}
                     </button>
                   ))}
@@ -2370,20 +2397,20 @@ export default function App() {
             {/* FPS */}
             <div style={{flexShrink:0,minWidth:80}}>
               <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,letterSpacing:.5}}>FPS</span>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:DARK,fontWeight:700}}>{animFps}</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,letterSpacing:.5}}>FPS</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:DARK,fontWeight:500}}>{animFps}</span>
               </div>
-              <input type="range" min={1} max={30} value={animFps} onChange={e=>{const v=+e.target.value;setAnimFps(v);animFpsRef.current=v;}} style={{width:'100%',background:`linear-gradient(to right,${DARK} ${(animFps-1)/29*100}%,rgba(0,0,0,.1) 0%)`}}/>
+              <input type="range" min={1} max={30} value={animFps} onChange={e=>{const v=+e.target.value;setAnimFps(v);animFpsRef.current=v;}} style={{width:'100%',background:`linear-gradient(to right,${ACCENT} ${(animFps-1)/29*100}%,var(--mp-track) 0%)`}}/>
             </div>
 
             <div style={{width:1,height:36,background:DARK,opacity:.1,flexShrink:0}}/>
 
             {/* Export */}
             <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0}}>
-              <button onClick={exportAnimSvg} style={{...ibtn('default'),height:22,padding:'0 9px',borderRadius:6,fontSize:9,fontFamily:"'Space Mono',monospace",fontWeight:700,letterSpacing:.3}}>
+              <button onClick={exportAnimSvg} style={{...ibtn('default'),height:22,padding:'0 9px',borderRadius:6,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,letterSpacing:.3}}>
                 <FileImage size={9} strokeWidth={2}/> SVG
               </button>
-              <button onClick={exportAnimVideo} disabled={isRecording} style={{...ibtn(isRecording?'danger':'lime'),height:22,padding:'0 9px',borderRadius:6,fontSize:9,fontFamily:"'Space Mono',monospace",fontWeight:700,letterSpacing:.3,opacity:isRecording?.6:1}}>
+              <button onClick={exportAnimVideo} disabled={isRecording} style={{...ibtn(isRecording?'danger':'lime'),height:22,padding:'0 9px',borderRadius:6,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,letterSpacing:.3,opacity:isRecording?.6:1}}>
                 <Video size={9} strokeWidth={2}/> {isRecording?'REC…':'VIDEO'}
               </button>
             </div>
@@ -2403,7 +2430,7 @@ export default function App() {
               </div>
               <div style={{background:'#0C0A16',height:130,position:'relative',overflow:'hidden'}}>
                 {videoId?(<iframe ref={ytIframeRef} key={videoId} src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1`} width="100%" height="100%" style={{border:'none',display:'block'}} allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen/>):(
-                  <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8}}><Music2 size={20} color="rgba(255,255,255,.15)" strokeWidth={1.5}/><span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:'rgba(255,255,255,.18)',letterSpacing:1.5}}>PASTE A YOUTUBE LINK</span></div>
+                  <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8}}><Music2 size={20} color="rgba(255,255,255,.15)" strokeWidth={1.5}/><span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:'rgba(255,255,255,.18)',letterSpacing:1.5}}>PASTE A YOUTUBE LINK</span></div>
                 )}
               </div>
               <div style={{padding:'10px 12px',display:'flex',gap:6}}>
@@ -2429,7 +2456,7 @@ export default function App() {
                   <ImageIcon size={13} strokeWidth={2}/> Reference
                 </div>
                 <div style={{display:'flex',gap:4}}>
-                  {refImage&&<button onClick={()=>setRefFit(f=>f==='cover'?'contain':'cover')} style={{background:WHITE,border:BORDER,cursor:'pointer',color:DARK,fontSize:9,fontFamily:"'Space Mono',monospace",fontWeight:700,padding:'2px 8px',borderRadius:5}}>{refFit==='cover'?'FILL':'FIT'}</button>}
+                  {refImage&&<button onClick={()=>setRefFit(f=>f==='cover'?'contain':'cover')} style={{background:WHITE,border:BORDER,cursor:'pointer',color:DARK,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,padding:'2px 8px',borderRadius:5}}>{refFit==='cover'?'FILL':'FIT'}</button>}
                   <button onClick={()=>fileInputRef.current?.click()} style={{...ibtn('default'),width:26,height:26,borderRadius:6}}><Upload size={10} strokeWidth={2}/></button>
                   <button onClick={()=>setShowRef(false)} style={{...ibtn('ghost'),width:24,height:24}}><X size={11} strokeWidth={2}/></button>
                 </div>
@@ -2441,7 +2468,7 @@ export default function App() {
               </div>
               <div style={{display:'flex',gap:6,padding:'8px 12px',borderTop:BORDER,alignItems:'center',background:SAND}}>
                 <Minus size={9} color={MUTED}/>
-                <input type="range" min={140} max={560} value={(refSize.w+refSize.h)/2} onChange={e=>{const v=+e.target.value,r=refSize.h/Math.max(1,refSize.w);setRefSize({w:v,h:Math.round(v*r)});}} style={{flex:1,background:`linear-gradient(to right,${DARK} ${((refSize.w+refSize.h)/2-140)/(560-140)*100}%,rgba(0,0,0,.1) 0%)`}}/>
+                <input type="range" min={140} max={560} value={(refSize.w+refSize.h)/2} onChange={e=>{const v=+e.target.value,r=refSize.h/Math.max(1,refSize.w);setRefSize({w:v,h:Math.round(v*r)});}} style={{flex:1,background:`linear-gradient(to right,${ACCENT} ${((refSize.w+refSize.h)/2-140)/(560-140)*100}%,var(--mp-track) 0%)`}}/>
                 <Eye size={9} color={MUTED}/>
                 <div onMouseDown={e=>{e.preventDefault();refResizeRef.current={startX:e.clientX,startY:e.clientY,startW:refSize.w,startH:refSize.h};}} style={{cursor:'nwse-resize',padding:4,opacity:.4}}>
                   <svg width="9" height="9" viewBox="0 0 9 9" fill={DARK}><rect x="5.5" y="0" width="1.4" height="1.4" rx=".4"/><rect x="0" y="5.5" width="1.4" height="1.4" rx=".4"/><rect x="5.5" y="5.5" width="1.4" height="1.4" rx=".4"/><rect x="2.7" y="5.5" width="1.4" height="1.4" rx=".4"/><rect x="5.5" y="2.7" width="1.4" height="1.4" rx=".4"/></svg>
@@ -2457,12 +2484,12 @@ export default function App() {
             <div style={{padding:'14px 16px'}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,paddingBottom:12,borderBottom:BORDER}}>
                 <div style={{display:'flex',alignItems:'center',gap:7}}><Settings2 size={13} strokeWidth={2}/><span style={{fontWeight:700,fontSize:14}}>Brush Dynamics</span></div>
-                <button onClick={()=>setBrushAdvanced(p=>({...p,[brushType]:DEFAULT_ADV[brushType]}))} style={{...ibtn('default'),height:26,padding:'0 9px',fontSize:9,fontFamily:"'Space Mono',monospace",fontWeight:700,letterSpacing:.3}}>RESET</button>
+                <button onClick={()=>setBrushAdvanced(p=>({...p,[brushType]:DEFAULT_ADV[brushType]}))} style={{...ibtn('default'),height:26,padding:'0 9px',fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,letterSpacing:.3}}>RESET</button>
               </div>
               {([{label:'Size Jitter',key:'sizeJitter',val:adv.sizeJitter,max:100,unit:'%'},{label:'Opacity Jitter',key:'opacityJitter',val:adv.opacityJitter,max:100,unit:'%'},{label:'Spacing',key:'spacingMult',val:Math.round(adv.spacingMult*100),max:300,unit:'%',scale:.01}] as {label:string;key:keyof BrushAdvanced;val:number;max:number;unit:string;scale?:number}[]).map(({label,key,val,max,unit,scale})=>(
                 <div key={key} style={{marginBottom:12}}>
-                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}><span style={{fontSize:12,fontWeight:600}}>{label}</span><span style={{fontFamily:"'Space Mono',monospace",fontSize:10,color:ACCENT,fontWeight:700}}>{val}{unit}</span></div>
-                  <input type="range" min={0} max={max} value={val} style={{width:'100%',background:`linear-gradient(to right,${DARK} ${val/max*100}%,rgba(0,0,0,.1) 0%)`}} onChange={e=>setBrushAdvanced(p=>({...p,[brushType]:{...p[brushType],[key]:scale?+e.target.value*scale:+e.target.value}}))}/>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}><span style={{fontSize:12,fontWeight:600}}>{label}</span><span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:10,color:ACCENT,fontWeight:500}}>{val}{unit}</span></div>
+                  <input type="range" min={0} max={max} value={val} style={{width:'100%',background:`linear-gradient(to right,${ACCENT} ${val/max*100}%,var(--mp-track) 0%)`}} onChange={e=>setBrushAdvanced(p=>({...p,[brushType]:{...p[brushType],[key]:scale?+e.target.value*scale:+e.target.value}}))}/>
                 </div>
               ))}
               <div style={{borderTop:BORDER,paddingTop:10,display:'flex',gap:3}}>
@@ -2482,7 +2509,7 @@ export default function App() {
                   <div style={{width:26,height:26,borderRadius:6,border:BORDER,background:`rgb(${surf.paper.join(',')})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><SurfaceIcon type={surf.type} size={13}/></div>
                   <div style={{textAlign:'left',flex:1}}>
                     <div style={{fontSize:12,fontWeight:surface===surf.type?700:500}}>{surf.label}</div>
-                    <div style={{fontFamily:"'Space Mono',monospace",fontSize:7.5,color:MUTED,letterSpacing:.3,marginTop:1}}>{surf.texStrength===0?'NO TEXTURE':`${Math.round(surf.texStrength*100)}% TEX`}</div>
+                    <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7.5,color:MUTED,letterSpacing:.3,marginTop:1}}>{surf.texStrength===0?'NO TEXTURE':`${Math.round(surf.texStrength*100)}% TEX`}</div>
                   </div>
                   {surface===surf.type&&<Check size={11} strokeWidth={2.5}/>}
                 </button>
@@ -2508,18 +2535,18 @@ export default function App() {
               {/* Recent colors */}
               {recentColors.length>0&&(
                 <div style={{marginBottom:14}}>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:6}}>RECENT</div>
+                  <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:6}}>RECENT</div>
                   <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                    {recentColors.map((rc,ci)=>(<div key={ci} className="pig" onClick={()=>applyColor(rc)} style={{width:18,height:18,borderRadius:'50%',background:`rgb(${rc.join(',')})`,border:`1.5px solid ${DARK}20`,cursor:'pointer',transition:'transform 100ms'}}/>))}
+                    {recentColors.map((rc,ci)=>(<div key={ci} className="pig" onClick={()=>applyColor(rc)} style={{width:18,height:18,borderRadius:'50%',background:`rgb(${rc.join(',')})`,border:`1px solid ${LINE_STRONG}`,cursor:'pointer',transition:'transform 100ms'}}/>))}
                   </div>
                 </div>
               )}
 
               {/* Pigment palette */}
               <div>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:6}}>PIGMENTS</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:6}}>PIGMENTS</div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>
-                  {PIGMENTS.map((p,idx)=>(<div key={idx} className="pig" onClick={()=>{setColor(p.rgb);setHsl(rgbToHsl(p.rgb[0],p.rgb[1],p.rgb[2]));setActivePig(idx);pushRecent(p.rgb);setIsEyedropper(false);}} title={p.name} style={{width:'100%',aspectRatio:'1',borderRadius:'50%',background:`rgb(${p.rgb.join(',')})`,transform:activePig===idx?'scale(1.2)':'scale(1)',cursor:'pointer',transition:'transform 100ms',border:activePig===idx?`2px solid ${LIME}`:`1.5px solid ${DARK}15`}}/>))}
+                  {PIGMENTS.map((p,idx)=>(<div key={idx} className="pig" onClick={()=>{setColor(p.rgb);setHsl(rgbToHsl(p.rgb[0],p.rgb[1],p.rgb[2]));setActivePig(idx);pushRecent(p.rgb);setIsEyedropper(false);}} title={p.name} style={{width:'100%',aspectRatio:'1',borderRadius:'50%',background:`rgb(${p.rgb.join(',')})`,transform:activePig===idx?'scale(1.2)':'scale(1)',cursor:'pointer',transition:'transform 100ms',border:activePig===idx?`2px solid ${ACCENT}`:`1px solid ${LINE}`}}/>))}
                 </div>
               </div>
             </div>
@@ -2531,10 +2558,10 @@ export default function App() {
           <div ref={brushLibRef} style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,top:isMobile?headerH+8:160,width:isMobile?'auto':460,maxWidth:isMobile?'calc(100vw - 16px)':undefined,maxHeight:isMobile?'calc(100vh - 130px)':480,animation:'sl 180ms ease',zIndex:320,background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',boxShadow:SHADOW_SM,display:'flex',flexDirection:'column'}}>
             {/* Header */}
             <div style={{padding:'12px 14px 10px',borderBottom:BORDER,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-              <div style={{fontWeight:800,fontSize:13,letterSpacing:-.3}}>Brush Library</div>
+              <div style={{fontWeight:600,fontSize:13,letterSpacing:-.3}}>Brush Library</div>
               <div style={{display:'flex',gap:2}}>
                 {(['builtin','imported'] as const).map(tab=>(
-                  <button key={tab} onClick={()=>setBrushLibTab(tab)} style={{height:24,padding:'0 10px',border:BORDER,borderRadius:7,background:brushLibTab===tab?DARK:WHITE,color:brushLibTab===tab?WHITE:DARK,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:.4,transition:'all 100ms'}}>
+                  <button key={tab} onClick={()=>setBrushLibTab(tab)} style={{height:24,padding:'0 10px',border:BORDER,borderRadius:7,background:brushLibTab===tab?DARK:WHITE,color:brushLibTab===tab?WHITE:DARK,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.4,transition:'all 100ms'}}>
                     {tab==='builtin'?'BUILT-IN':'IMPORTED'}{tab==='imported'&&customBrushes.length>0?` (${customBrushes.length})`:''}
                   </button>
                 ))}
@@ -2550,7 +2577,7 @@ export default function App() {
                   if(!brushes.length) return null;
                   return(
                     <div key={cat} style={{marginBottom:10}}>
-                      <div style={{fontFamily:"'Space Mono',monospace",fontSize:7.5,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:6}}>{cat.toUpperCase()}</div>
+                      <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7.5,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:6}}>{cat.toUpperCase()}</div>
                       <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                         {brushes.map(({type,label,key})=>{
                           const isActive=!selectedCustom&&brushType===type&&!eraserMode;
@@ -2558,8 +2585,8 @@ export default function App() {
                             <button key={type} onClick={()=>{setBrushType(type);setSelectedCustom(null);setIsEyedropper(false);setShowBrushLib(false);setEraserMode(false);}} title={key?`${label} [${key}]`:label}
                               style={{width:68,height:56,border:BORDER,borderRadius:9,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
                               <BrushIcon type={type} size={18}/>
-                              <span style={{fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,letterSpacing:.3,color:isActive?DARK:MUTED,lineHeight:1}}>{label.toUpperCase()}</span>
-                              {key&&<span style={{fontFamily:"'Space Mono',monospace",fontSize:5.5,color:isActive?DARK:MUTED,opacity:.6}}>[{key}]</span>}
+                              <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:6.5,fontWeight:500,letterSpacing:.3,color:isActive?DARK:MUTED,lineHeight:1}}>{label.toUpperCase()}</span>
+                              {key&&<span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:5.5,color:isActive?DARK:MUTED,opacity:.6}}>[{key}]</span>}
                             </button>
                           );
                         })}
@@ -2572,7 +2599,7 @@ export default function App() {
                 customBrushes.length===0?(
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:120,gap:8,opacity:.5}}>
                     <Upload size={22} strokeWidth={1.5} color={MUTED}/>
-                    <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700}}>NO IMPORTED BRUSHES YET</span>
+                    <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:MUTED,fontWeight:500}}>NO IMPORTED BRUSHES YET</span>
                   </div>
                 ):(
                   <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
@@ -2583,7 +2610,7 @@ export default function App() {
                           <button onClick={()=>{setSelectedCustom(cb);setShowBrushLib(false);}}
                             style={{width:68,height:56,border:BORDER,borderRadius:9,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4,transition:'all 110ms'}}>
                             {cb.previewUrl?<img src={cb.previewUrl} alt="" style={{width:22,height:22,objectFit:'contain',imageRendering:'pixelated',opacity:.85}}/>:<Paintbrush2 size={18}/>}
-                            <span style={{fontFamily:"'Space Mono',monospace",fontSize:5.5,fontWeight:700,color:isActive?DARK:MUTED,letterSpacing:.3,maxWidth:60,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{cb.name.toUpperCase()}</span>
+                            <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:5.5,fontWeight:500,color:isActive?DARK:MUTED,letterSpacing:.3,maxWidth:60,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{cb.name.toUpperCase()}</span>
                           </button>
                           <button onClick={()=>{const next=customBrushes.filter(x=>x.id!==cb.id);setCustomBrushes(next);customBrushesRef.current=next;if(selectedCustom?.id===cb.id)setSelectedCustom(null);}} title="Remove brush" style={{position:'absolute',top:-4,right:-4,width:14,height:14,border:BORDER,borderRadius:'50%',background:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',padding:0,zIndex:1}}>
                             <X size={7} strokeWidth={2.5}/>
@@ -2598,17 +2625,17 @@ export default function App() {
 
             {/* Import section */}
             <div style={{borderTop:BORDER,padding:'10px 12px',background:CREAM,flexShrink:0}}>
-              <div style={{fontFamily:"'Space Mono',monospace",fontSize:7.5,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:7}}>IMPORT BRUSHES</div>
+              <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7.5,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:7}}>IMPORT BRUSHES</div>
               <div style={{display:'flex',gap:6,alignItems:'center'}}>
                 <button onClick={()=>brushFileInputRef.current?.click()} disabled={brushImportLoading}
-                  style={{flex:1,height:32,border:BORDER,borderRadius:8,background:brushImportLoading?SAND:DARK,color:WHITE,cursor:brushImportLoading?'wait':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:7,fontFamily:"'Space Grotesk',sans-serif",fontSize:11,fontWeight:700,transition:'all 100ms'}}>
+                  style={{flex:1,height:32,border:BORDER,borderRadius:8,background:brushImportLoading?SAND:DARK,color:WHITE,cursor:brushImportLoading?'wait':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:7,fontFamily:"'Geist',system-ui,sans-serif",fontSize:11,fontWeight:700,transition:'all 100ms'}}>
                   <Upload size={11} strokeWidth={2}/>
                   {brushImportLoading?'Importing…':'Import .brush / .brushset / .abr'}
                 </button>
                 <input ref={brushFileInputRef} type="file" accept=".brush,.brushset,.abr" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0];if(f)handleBrushImport(f);e.target.value='';}}/>
               </div>
-              {brushImportError&&<div style={{marginTop:6,fontFamily:"'Space Mono',monospace",fontSize:8,color:PINK,fontWeight:700,lineHeight:1.4}}>{brushImportError}</div>}
-              <div style={{marginTop:6,fontFamily:"'Space Mono',monospace",fontSize:7,color:MUTED,letterSpacing:.3,lineHeight:1.5}}>
+              {brushImportError&&<div style={{marginTop:6,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:PINK,fontWeight:500,lineHeight:1.4}}>{brushImportError}</div>}
+              <div style={{marginTop:6,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,color:MUTED,letterSpacing:.3,lineHeight:1.5}}>
                 Procreate: .brush or .brushset — Photoshop: .abr (v1/v2 only)
               </div>
             </div>
@@ -2616,7 +2643,7 @@ export default function App() {
         )}
 
         {/* ══ TOOL TRAY ════════════════════════════════════════════════════════ */}
-        <div style={{position:'fixed',left:sideW,right:0,bottom:0,height:toolH,background:WHITE,borderTop:BORDER,display:'flex',alignItems:'center',padding:isMobile?'0 6px':'0 14px',gap:isMobile?3:8,zIndex:150,overflowX:'auto',scrollbarWidth:'none'}}>
+        <div style={{position:'fixed',left:isMobile?6:8,right:isMobile?6:8,bottom:isMobile?6:8,height:toolH-(isMobile?12:16),background:WHITE,border:BORDER,borderRadius:isMobile?14:16,boxShadow:SHADOW_SM,display:'flex',alignItems:'center',padding:isMobile?'0 5px':'0 8px',gap:isMobile?2:8,zIndex:150,overflowX:'auto',scrollbarWidth:'none'}}>
 
           {/* Quick-access basic brushes */}
           <div data-tour="brushes" style={{display:'flex',gap:2,flexShrink:0,alignItems:'center'}}>
@@ -2626,16 +2653,16 @@ export default function App() {
                 <button key={type} onClick={()=>{setBrushType(type);setSelectedCustom(null);setIsEyedropper(false);setEraserMode(false);}} title={`${BRUSH_DEFS.find(b=>b.type===type)?.label} [${key}]`}
                   style={{width:isMobile?26:32,height:isMobile?38:46,border:BORDER,borderRadius:8,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
                   <BrushIcon type={type} size={isMobile?10:12}/>
-                  {!isMobile&&<span style={{fontFamily:"'Space Mono',monospace",fontSize:5.5,fontWeight:700,letterSpacing:.5,color:isActive?DARK:MUTED}}>{key}</span>}
+                  {!isMobile&&<span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:5.5,fontWeight:500,letterSpacing:.5,color:isActive?DARK:MUTED}}>{key}</span>}
                 </button>
               );
             })}
           </div>
 
-          <button onClick={()=>{setEraserMode(p=>!p);setSmudgeMode(false);}} title="Eraser Mode [E] -- uses current brush" style={{...ibtn('default',eraserMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3,background:eraserMode?PINK:WHITE,color:eraserMode?WHITE:DARK}}>
+          <button onClick={()=>{setEraserMode(p=>!p);setSmudgeMode(false);}} title="Eraser Mode [E] -- uses current brush" style={{...ibtn('default',eraserMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",letterSpacing:.3,background:eraserMode?PINK:WHITE,color:eraserMode?'#fff':DARK}}>
             <Eraser size={isMobile?11:13} strokeWidth={2}/>
           </button>
-          <button onClick={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}} title="Smudge [S]" style={{...ibtn('default',smudgeMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Space Mono',monospace",letterSpacing:.3}}>
+          <button onClick={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}} title="Smudge [S]" style={{...ibtn('default',smudgeMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",letterSpacing:.3}}>
             <Blend size={isMobile?11:13} strokeWidth={2}/>
           </button>
           {!isMobile&&<button ref={brushAdvBtnRef} onClick={()=>{setShowBrushAdv(p=>!p);setShowSurface(false);setShowBrushLib(false);setShowColorPanel(false);}} style={{...ibtn('default',showBrushAdv),width:28,height:34,borderRadius:8,flexShrink:0}}>
@@ -2646,23 +2673,23 @@ export default function App() {
           {!isMobile?(<div data-tour="strokes" style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0,marginLeft:4}}>
             {([{lbl:'SIZE',val:brushSize,min:2,max:150,cb:(v:number)=>setBrushSize(v),unit:''},{lbl:'FLOW',val:opacity,min:5,max:100,cb:(v:number)=>setOpacity(v),unit:'%'},{lbl:'SMOOTH',val:stabilizer,min:0,max:100,cb:(v:number)=>setStabilizer(v),unit:''}] as const).map(({lbl,val,min,max,cb,unit})=>(
               <div key={lbl} style={{display:'flex',alignItems:'center',gap:6}} title={lbl==='SMOOTH'?'Stabilizer: trails the brush behind your pointer for steadier lines':undefined}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:38,letterSpacing:.5}}>{lbl}</span>
-                <input type="range" min={min} max={max} value={val} onChange={e=>cb(+e.target.value)} aria-label={lbl} style={{width:88,background:`linear-gradient(to right,${DARK} ${(val-min)/(max-min)*100}%,rgba(0,0,0,.1) 0%)`}}/>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{lbl==='SMOOTH'&&val===0?'OFF':`${val}${unit}`}</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,width:38,letterSpacing:.5}}>{lbl}</span>
+                <input type="range" min={min} max={max} value={val} onChange={e=>cb(+e.target.value)} aria-label={lbl} style={{width:88,background:`linear-gradient(to right,${ACCENT} ${(val-min)/(max-min)*100}%,var(--mp-track) 0%)`}}/>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:DARK,fontWeight:500,width:26,textAlign:'right'}}>{lbl==='SMOOTH'&&val===0?'OFF':`${val}${unit}`}</span>
               </div>
             ))}
           </div>):(
             /* Mobile: compact size slider only */
             /* Range inputs refuse to shrink below ~129px unless told to; the size HUD shows the value */
             <div data-tour="strokes" style={{display:'flex',alignItems:'center',flex:'1 1 0',minWidth:44,maxWidth:120}}>
-              <input type="range" min={2} max={150} value={brushSize} onChange={e=>setBrushSize(+e.target.value)} aria-label="Brush size" style={{width:'100%',minWidth:0,background:`linear-gradient(to right,${DARK} ${(brushSize-2)/148*100}%,rgba(0,0,0,.1) 0%)`}}/>
+              <input type="range" min={2} max={150} value={brushSize} onChange={e=>setBrushSize(+e.target.value)} aria-label="Brush size" style={{width:'100%',minWidth:0,background:`linear-gradient(to right,${ACCENT} ${(brushSize-2)/148*100}%,var(--mp-track) 0%)`}}/>
             </div>
           )}
 
           {!isMobile&&<div style={{width:1,height:36,background:DARK,opacity:.1,flexShrink:0}}/>}
 
           {/* Color swatch — opens color panel */}
-          <button data-tour="color" ref={colorBtnRef} onClick={()=>{setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);}} title="Color [C]" aria-label="Color" style={{position:'relative',width:isMobile?30:38,height:isMobile?30:38,borderRadius:'50%',background:colorCss,border:showColorPanel?`2.5px solid ${LIME}`:BORDER,cursor:'pointer',flexShrink:0,padding:0,display:'flex',alignItems:'center',justifyContent:'center',transition:'border 120ms ease'}}>
+          <button data-tour="color" ref={colorBtnRef} onClick={()=>{setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);}} title="Color [C]" aria-label="Color" style={{position:'relative',width:isMobile?30:38,height:isMobile?30:38,borderRadius:'50%',background:colorCss,border:showColorPanel?`2.5px solid ${ACCENT}`:BORDER,cursor:'pointer',flexShrink:0,padding:0,display:'flex',alignItems:'center',justifyContent:'center',transition:'border 120ms ease'}}>
             <ChevronDown size={isMobile?8:10} strokeWidth={2.5} style={{color:l>60?DARK:WHITE,opacity:.7}}/>
           </button>
 
@@ -2675,8 +2702,8 @@ export default function App() {
               <button onClick={handleRedo} disabled={!hist.redo} aria-label="Redo" title="Redo [Ctrl+Shift+Z]" style={{width:isMobile?26:34,height:isMobile?34:42,border:'none',background:WHITE,color:DARK,cursor:hist.redo?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',opacity:hist.redo?1:.35}}><Redo2 size={isMobile?11:13} strokeWidth={2}/></button>
             </div>
             {!isMobile&&<button onClick={handleClear} className="lift" style={{...ibtn('danger'),width:34,height:46,borderRadius:9}} title={clearConfirm?'Click again to clear':'Clear layer'}><Trash2 size={13} strokeWidth={2}/></button>}
-            {!isMobile&&<button data-tour="save" onClick={()=>saveToGallery()} className="lift" style={{width:34,height:46,border:BORDER,borderRadius:9,background:'#1a9e5c',color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}} title="Save to gallery"><LayoutGrid size={13} strokeWidth={2}/></button>}
-            <button data-tour="save" onClick={handleSave} className="lift" style={{height:isMobile?38:46,padding:isMobile?'0 10px':'0 16px',border:BORDER,borderRadius:9,background:DARK,color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',gap:6,fontFamily:"'Space Grotesk',sans-serif",fontSize:isMobile?10:12,fontWeight:700,flexShrink:0}}>
+            {!isMobile&&<button data-tour="save" onClick={()=>saveToGallery()} className="lift" style={{width:34,height:46,border:BORDER,borderRadius:9,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}} title="Save to gallery"><LayoutGrid size={13} strokeWidth={2}/></button>}
+            <button data-tour="save" onClick={handleSave} className="lift" style={{height:isMobile?38:46,padding:isMobile?'0 10px':'0 16px',border:BORDER,borderRadius:9,background:DARK,color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',gap:6,fontFamily:"'Geist',system-ui,sans-serif",fontSize:isMobile?10:12,fontWeight:700,flexShrink:0}}>
               <Download size={isMobile?11:13} strokeWidth={2}/>{!isMobile&&' Save PNG'}
             </button>
           </div>
@@ -2688,41 +2715,41 @@ export default function App() {
             <div className="modal" onClick={e=>e.stopPropagation()} style={{animation:'su 200ms ease',width:isMobile?'auto':500}}>
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:isMobile?14:22}}>
                 <div>
-                  <h2 style={{fontWeight:800,fontSize:isMobile?18:22,color:DARK,letterSpacing:-0.5}}>Canvas Size</h2>
-                  <p style={{fontSize:11,color:MUTED,marginTop:3,fontFamily:"'Space Mono',monospace"}}>Current: {canvasW} × {canvasH} px</p>
+                  <h2 style={{fontWeight:600,fontSize:isMobile?18:22,color:DARK,letterSpacing:-0.5}}>Canvas Size</h2>
+                  <p style={{fontSize:11,color:MUTED,marginTop:3,fontFamily:"'Geist Mono',ui-monospace,monospace"}}>Current: {canvasW} × {canvasH} px</p>
                 </div>
                 <button onClick={()=>setShowCanvasSize(false)} style={{...ibtn(),width:32,height:32,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
               </div>
 
               <div style={{marginBottom:18}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>PRESETS</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>PRESETS</div>
                 <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(3,1fr)':'repeat(4,1fr)',gap:6}}>
                   {CANVAS_PRESETS.map(p=>(
-                    <button key={p.label} onClick={()=>{setCsW(p.w);setCsH(p.h);}} style={{border:BORDER,borderRadius:8,padding:'7px 4px',background:csW===p.w&&csH===p.h?LIME:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Space Grotesk',sans-serif",fontWeight:600,transition:'all 100ms',textAlign:'center'}}>
+                    <button key={p.label} onClick={()=>{setCsW(p.w);setCsH(p.h);}} style={{border:BORDER,borderRadius:8,padding:'7px 4px',background:csW===p.w&&csH===p.h?LIME:WHITE,color:DARK,cursor:'pointer',fontFamily:"'Geist',system-ui,sans-serif",fontWeight:600,transition:'all 100ms',textAlign:'center'}}>
                       <div style={{fontSize:10,fontWeight:700}}>{p.label}</div>
-                      <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,marginTop:2}}>{p.w}×{p.h}</div>
+                      <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,marginTop:2}}>{p.w}×{p.h}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
               <div style={{marginBottom:18}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>CUSTOM</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>CUSTOM</div>
                 <div style={{display:'flex',gap:10,alignItems:'center'}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,fontWeight:700,marginBottom:5}}>Width (px)</div>
-                    <input type="number" value={csW} onChange={e=>setCsW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700}}/>
+                    <input type="number" value={csW} onChange={e=>setCsW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500}}/>
                   </div>
-                  <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:20,fontWeight:800,color:MUTED,paddingTop:20}}>×</span>
+                  <span style={{fontFamily:"'Geist',system-ui,sans-serif",fontSize:20,fontWeight:600,color:MUTED,paddingTop:20}}>×</span>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,fontWeight:700,marginBottom:5}}>Height (px)</div>
-                    <input type="number" value={csH} onChange={e=>setCsH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700}}/>
+                    <input type="number" value={csH} onChange={e=>setCsH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500}}/>
                   </div>
                 </div>
               </div>
 
               <div style={{marginBottom:22}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>CONTENT MODE</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>CONTENT MODE</div>
                 <div style={{display:'flex',gap:8}}>
                   {([['crop','Crop / Center','Keeps existing content, adjusts canvas edges'],['scale','Scale Content','Stretches painting to fit new dimensions']] as const).map(([m,label,desc])=>(
                     <button key={m} onClick={()=>setCsMode(m)} style={{flex:1,border:BORDER,borderRadius:9,padding:'10px 12px',background:csMode===m?LIME:WHITE,color:DARK,cursor:'pointer',textAlign:'left',transition:'all 100ms'}}>
@@ -2749,13 +2776,13 @@ export default function App() {
             <div onClick={e=>e.stopPropagation()} style={{background:WHITE,border:BORDER,borderRadius:isMobile?14:16,boxShadow:SHADOW,width:isMobile?'auto':700,maxWidth:'94vw',maxHeight:'85vh',display:'flex',flexDirection:'column',animation:'su 200ms ease',overflow:'hidden'}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 22px 14px',borderBottom:BORDER,background:CREAM,flexShrink:0}}>
                 <div>
-                  <h2 style={{fontWeight:800,fontSize:20,color:DARK,letterSpacing:-0.5}}>Gallery</h2>
-                  <p style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,marginTop:2,fontWeight:700}}>{gallery.length} SAVED</p>
+                  <h2 style={{fontWeight:600,fontSize:20,color:DARK,letterSpacing:-0.5}}>Gallery</h2>
+                  <p style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:MUTED,marginTop:2,fontWeight:500}}>{gallery.length} SAVED</p>
                 </div>
                 <div style={{display:'flex',gap:8,alignItems:'center'}}>
                   {!isMobile&&<div style={{display:'flex',border:BORDER,borderRadius:9,overflow:'hidden'}}>
-                    <input value={galleryName} onChange={e=>setGalleryName(e.target.value)} placeholder="Name this painting..." onKeyDown={e=>e.key==='Enter'&&(saveToGallery(galleryName||undefined),setGalleryName(''))} style={{background:WHITE,border:'none',outline:'none',color:DARK,fontFamily:"'Space Grotesk',sans-serif",fontWeight:500,fontSize:12,padding:'8px 13px',width:200}}/>
-                    <button onClick={()=>{saveToGallery(galleryName||undefined);setGalleryName('');}} style={{background:DARK,border:'none',borderLeft:BORDER,cursor:'pointer',color:WHITE,padding:'0 14px',fontFamily:"'Space Grotesk',sans-serif",fontSize:12,fontWeight:700}}>Save</button>
+                    <input value={galleryName} onChange={e=>setGalleryName(e.target.value)} placeholder="Name this painting..." onKeyDown={e=>e.key==='Enter'&&(saveToGallery(galleryName||undefined),setGalleryName(''))} style={{background:WHITE,border:'none',outline:'none',color:DARK,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:500,fontSize:12,padding:'8px 13px',width:200}}/>
+                    <button onClick={()=>{saveToGallery(galleryName||undefined);setGalleryName('');}} style={{background:DARK,border:'none',borderLeft:BORDER,cursor:'pointer',color:WHITE,padding:'0 14px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:700}}>Save</button>
                   </div>}
                   <button onClick={()=>setShowGallery(false)} style={{...ibtn(),width:34,height:34,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
                 </div>
@@ -2775,14 +2802,14 @@ export default function App() {
                         onClick={()=>loadFromGallery(entry.dataUrl)}>
                         <div style={{height:124,overflow:'hidden',position:'relative',background:CREAM,borderBottom:BORDER}}>
                           <img src={entry.dataUrl} alt={entry.name} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
-                          {entry.isAuto&&<span style={{position:'absolute',top:5,left:5,background:SAND,color:MUTED,border:BORDER,borderRadius:5,fontFamily:"'Space Mono',monospace",fontSize:7,padding:'1px 5px',fontWeight:700,letterSpacing:.5}}>AUTO</span>}
+                          {entry.isAuto&&<span style={{position:'absolute',top:5,left:5,background:SAND,color:MUTED,border:BORDER,borderRadius:5,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,padding:'1px 5px',fontWeight:500,letterSpacing:.5}}>AUTO</span>}
                         </div>
                         <div style={{padding:'8px 10px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:6}}>
                           <div style={{minWidth:0}}>
                             <div style={{fontWeight:700,fontSize:11,color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{entry.name}</div>
-                            <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,marginTop:2}}>{new Date(entry.createdAt).toLocaleDateString([],{month:'short',day:'numeric'})}</div>
+                            <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,marginTop:2}}>{new Date(entry.createdAt).toLocaleDateString([],{month:'short',day:'numeric'})}</div>
                           </div>
-                          <button onClick={e=>{e.stopPropagation();deleteFromGallery(entry.id);}} style={{background:PINK,border:BORDER,cursor:'pointer',color:WHITE,display:'flex',padding:5,borderRadius:7,flexShrink:0}}><Trash2 size={9} strokeWidth={2.5}/></button>
+                          <button onClick={e=>{e.stopPropagation();deleteFromGallery(entry.id);}} style={{background:PINK,border:'none',cursor:'pointer',color:'#fff',display:'flex',padding:5,borderRadius:7,flexShrink:0}}><Trash2 size={9} strokeWidth={2.5}/></button>
                         </div>
                       </div>
                     ))}
@@ -2798,20 +2825,20 @@ export default function App() {
           <div className="modal-bg" onClick={()=>setShowInvite(false)} style={{animation:'fi 140ms ease'}}>
             <div className="modal" onClick={e=>e.stopPropagation()} style={{animation:'su 200ms ease',width:isMobile?'auto':420}}>
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
-                <div><h2 style={{fontWeight:800,fontSize:isMobile?18:20,letterSpacing:-0.5}}>Collaborate</h2><p style={{fontSize:12,color:MUTED,marginTop:2}}>Paint together in real time</p></div>
+                <div><h2 style={{fontWeight:600,fontSize:isMobile?18:20,letterSpacing:-0.5}}>Collaborate</h2><p style={{fontSize:12,color:MUTED,marginTop:2}}>Paint together in real time</p></div>
                 <button onClick={()=>setShowInvite(false)} style={{...ibtn(),width:32,height:32,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
               </div>
 
               <div style={{display:'flex',alignItems:'center',gap:9,padding:'10px 12px',background:CREAM,borderRadius:9,border:BORDER,marginBottom:14}}>
-                <div style={{width:30,height:30,borderRadius:8,background:myColor.current,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:WHITE,fontWeight:700,fontFamily:"'Space Grotesk',sans-serif"}}>{userName.charAt(0)}</div>
-                <div><div style={{fontSize:13,fontWeight:700}}>{userName}</div><div style={{fontSize:9,fontFamily:"'Space Mono',monospace",color:MUTED,fontWeight:700,marginTop:2}}>{isConnected?'CONNECTED':'OFFLINE'}</div></div>
+                <div style={{width:30,height:30,borderRadius:8,background:myColor.current,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff',fontWeight:700,fontFamily:"'Geist',system-ui,sans-serif"}}>{userName.charAt(0)}</div>
+                <div><div style={{fontSize:13,fontWeight:700}}>{userName}</div><div style={{fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",color:MUTED,fontWeight:500,marginTop:2}}>{isConnected?'CONNECTED':'OFFLINE'}</div></div>
                 {isConnected&&<span className="pill" style={{marginLeft:'auto',background:LIME,color:DARK}}>LIVE</span>}
               </div>
 
               {roomId&&(
                 <div style={{display:'flex',gap:2,background:CREAM,border:BORDER,borderRadius:9,padding:3,marginBottom:14}}>
                   {(['room','people','chat'] as const).map(tab=>(
-                    <button key={tab} onClick={()=>setCollabTab(tab)} style={{flex:1,padding:'7px 0',border:tab===collabTab?BORDER:'none',borderRadius:7,cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,background:tab===collabTab?WHITE:CREAM,color:tab===collabTab?DARK:MUTED,transition:'all 140ms',letterSpacing:.5,position:'relative'}}>
+                    <button key={tab} onClick={()=>setCollabTab(tab)} style={{flex:1,padding:'7px 0',border:tab===collabTab?BORDER:'none',borderRadius:7,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,background:tab===collabTab?WHITE:CREAM,color:tab===collabTab?DARK:MUTED,transition:'all 140ms',letterSpacing:.5,position:'relative'}}>
                       {tab.toUpperCase()}
                       {tab==='chat'&&chatMessages.length>0&&collabTab!=='chat'&&<span style={{position:'absolute',top:5,right:8,width:5,height:5,borderRadius:'50%',background:PINK,border:BORDER}}/>}
                     </button>
@@ -2830,30 +2857,30 @@ export default function App() {
               )}
               {roomId&&collabTab==='room'&&(
                 <div>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:7}}>INVITE LINK</div>
+                  <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:7}}>INVITE LINK</div>
                   <div style={{display:'flex',gap:6,marginBottom:14}}>
-                    <div style={{flex:1,background:CREAM,border:BORDER,borderRadius:8,padding:'8px 11px',fontSize:10,fontFamily:"'Space Mono',monospace",color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:5}}><Link size={9} color={MUTED}/>{`${window.location.origin}?room=${roomId}`}</div>
+                    <div style={{flex:1,background:CREAM,border:BORDER,borderRadius:8,padding:'8px 11px',fontSize:10,fontFamily:"'Geist Mono',ui-monospace,monospace",color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:5}}><Link size={9} color={MUTED}/>{`${window.location.origin}?room=${roomId}`}</div>
                     <button onClick={copyLink} style={{...ibtn(linkCopied?'lime':'default'),width:38,height:38,borderRadius:8}}>
                       {linkCopied?<Check size={12} strokeWidth={2.5}/>:<Copy size={12} strokeWidth={2}/>}
                     </button>
                   </div>
-                  <button onClick={()=>{leaveRoom();setShowInvite(false);}} style={{...ibtn('default'),width:'100%',height:38,borderRadius:9,gap:7,fontSize:12,justifyContent:'center',fontWeight:700,color:'#C4453A',border:'1.5px solid #C4453A22'}}>
+                  <button onClick={()=>{leaveRoom();setShowInvite(false);}} style={{...ibtn('default'),width:'100%',height:38,borderRadius:9,gap:7,fontSize:12,justifyContent:'center',fontWeight:700,color:PINK,border:BORDER}}>
                     <LogOut size={13} strokeWidth={2}/> Leave Room
                   </button>
                 </div>
               )}
               {roomId&&collabTab==='people'&&(
                 <div className="sb" style={{maxHeight:200,overflowY:'auto'}}>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>IN ROOM ({onlineUsers.length})</div>
+                  <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>IN ROOM ({onlineUsers.length})</div>
                   {onlineUsers.length===0&&<p style={{fontSize:13,color:MUTED,textAlign:'center',padding:'18px 0'}}>Waiting for others to join...</p>}
-                  {onlineUsers.map(u=>(<div key={u.uid} style={{display:'flex',alignItems:'center',gap:9,padding:'8px 10px',background:CREAM,borderRadius:8,border:BORDER,marginBottom:5}}><div style={{width:24,height:24,borderRadius:7,background:u.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:WHITE,fontWeight:700,fontFamily:"'Space Grotesk',sans-serif"}}>{u.name.charAt(0)}</div><span style={{fontSize:12,fontWeight:600}}>{u.name}</span>{u.uid===myUid.current&&<span className="pill" style={{marginLeft:'auto',background:SAND,color:MUTED}}>YOU</span>}</div>))}
+                  {onlineUsers.map(u=>(<div key={u.uid} style={{display:'flex',alignItems:'center',gap:9,padding:'8px 10px',background:CREAM,borderRadius:8,border:BORDER,marginBottom:5}}><div style={{width:24,height:24,borderRadius:7,background:u.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',fontWeight:700,fontFamily:"'Geist',system-ui,sans-serif"}}>{u.name.charAt(0)}</div><span style={{fontSize:12,fontWeight:600}}>{u.name}</span>{u.uid===myUid.current&&<span className="pill" style={{marginLeft:'auto',background:SAND,color:MUTED}}>YOU</span>}</div>))}
                 </div>
               )}
               {roomId&&collabTab==='chat'&&(
                 <div style={{display:'flex',flexDirection:'column',gap:8}}>
                   <div className="sb" style={{height:180,overflowY:'auto',display:'flex',flexDirection:'column',gap:5}}>
                     {chatMessages.length===0&&<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,opacity:.35}}><MessageSquare size={24} color={DARK} strokeWidth={1.5}/><p style={{fontSize:12,fontWeight:600}}>No messages yet</p></div>}
-                    {chatMessages.map((msg,i)=>{const isOwn=msg.uid===myUid.current;return(<div key={i} style={{display:'flex',gap:6,flexDirection:isOwn?'row-reverse':'row',alignItems:'flex-start'}}><div style={{width:20,height:20,borderRadius:6,background:msg.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,color:WHITE,fontWeight:700,flexShrink:0,fontFamily:"'Space Grotesk',sans-serif"}}>{msg.name.charAt(0)}</div><div style={{maxWidth:'72%'}}>{!isOwn&&<div style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,marginBottom:2,fontWeight:700}}>{msg.name}</div>}<div style={{background:isOwn?DARK:CREAM,color:isOwn?WHITE:DARK,borderRadius:isOwn?'9px 9px 2px 9px':'9px 9px 9px 2px',padding:'6px 10px',fontSize:12,lineHeight:1.5,wordBreak:'break-word',border:BORDER,fontWeight:500}}>{msg.text}</div></div></div>);})}
+                    {chatMessages.map((msg,i)=>{const isOwn=msg.uid===myUid.current;return(<div key={i} style={{display:'flex',gap:6,flexDirection:isOwn?'row-reverse':'row',alignItems:'flex-start'}}><div style={{width:20,height:20,borderRadius:6,background:msg.color,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,color:'#fff',fontWeight:700,flexShrink:0,fontFamily:"'Geist',system-ui,sans-serif"}}>{msg.name.charAt(0)}</div><div style={{maxWidth:'72%'}}>{!isOwn&&<div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,marginBottom:2,fontWeight:500}}>{msg.name}</div>}<div style={{background:isOwn?DARK:CREAM,color:isOwn?WHITE:DARK,borderRadius:isOwn?'9px 9px 2px 9px':'9px 9px 9px 2px',padding:'6px 10px',fontSize:12,lineHeight:1.5,wordBreak:'break-word',border:BORDER,fontWeight:500}}>{msg.text}</div></div></div>);})}
                     <div ref={chatEndRef}/>
                   </div>
                   <div style={{display:'flex',gap:6}}>
@@ -2872,21 +2899,21 @@ export default function App() {
             <div className="modal" onClick={e=>e.stopPropagation()} style={{animation:'su 200ms ease',width:isMobile?'auto':520}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:isMobile?14:22}}>
                 <div>
-                  <h2 style={{fontWeight:800,fontSize:isMobile?18:22,letterSpacing:-0.5}}>Keyboard Shortcuts</h2>
-                  <p style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,marginTop:3,letterSpacing:.5}}>MEPAINT STUDIO</p>
+                  <h2 style={{fontWeight:600,fontSize:isMobile?18:22,letterSpacing:-0.5}}>Keyboard Shortcuts</h2>
+                  <p style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:MUTED,fontWeight:500,marginTop:3,letterSpacing:.5}}>MEPAINT STUDIO</p>
                 </div>
                 <button onClick={()=>setShowHelp(false)} style={{...ibtn(),width:32,height:32,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
               </div>
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?'4px 10px':'5px 20px'}}>
                 {[['1–5','Select brushes'],['E','Eraser mode'],['S','Toggle smudge'],['C','Color panel'],['[ / ]','Brush size ±5'],['Alt+E','Eyedropper'],['Right-click','Pop-up palette'],['T','Transform tool'],['L','Lasso select'],['Ctrl+Z','Undo'],['Ctrl+Shift+Z','Redo'],['Ctrl+S','Save PNG'],['Scroll','Zoom'],['Space+Drag','Pan canvas'],['0','Fit to screen'],['F','Flip horizontal'],['V','Flip vertical'],['G','Gallery'],['+ / -','Zoom in/out'],['?','Show shortcuts'],['Esc','Close all panels']].map(([k,d])=>(
                   <div key={k} style={{display:'flex',alignItems:'center',gap:9,padding:'6px 0',borderBottom:`1px solid rgba(0,0,0,.06)`}}>
-                    <kbd style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:DARK,background:LIME,border:BORDER,borderRadius:6,padding:'3px 8px',minWidth:70,textAlign:'center',flexShrink:0}}>{k}</kbd>
+                    <kbd style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:DARK,background:SAND,border:BORDER,borderBottomWidth:2,borderRadius:7,padding:'3px 8px',minWidth:70,textAlign:'center',flexShrink:0}}>{k}</kbd>
                     <span style={{fontSize:12,color:DARK}}>{d}</span>
                   </div>
                 ))}
               </div>
               <div style={{marginTop:18,paddingTop:14,borderTop:BORDER,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.5}}>SPECTRAL PIGMENT MIXING</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:MUTED,fontWeight:500,letterSpacing:.5}}>SPECTRAL PIGMENT MIXING</span>
                 <button onClick={()=>{setShowHelp(false);setTimeout(()=>setTourOpen(true),120);}} className="lift" style={{...ibtn('lime'),height:34,padding:'0 14px',borderRadius:9,gap:7}}>
                   <Compass size={13} strokeWidth={2.2}/> Replay the tour
                 </button>
@@ -2899,20 +2926,20 @@ export default function App() {
 
       {/* ══ LAYER PANEL ══════════════════════════════════════════════════════ */}
       {showLayerPanel&&(
-        <div ref={layerPanelRef} style={{position:'fixed',left:isMobile?8:58,right:isMobile?8:undefined,top:isMobile?headerH+8:layerPanelTop,width:isMobile?'auto':234,maxWidth:isMobile?'calc(100vw - 16px)':undefined,zIndex:230,animation:'sl 180ms cubic-bezier(0.34,1.56,0.64,1)',display:'flex',flexDirection:'column',background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',boxShadow:SHADOW_SM,maxHeight:isMobile?`calc(100vh - ${headerH+toolH+16}px)`:`calc(100vh - ${layerPanelTop + 8}px)`}}>
+        <div ref={layerPanelRef} style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,top:isMobile?headerH+8:layerPanelTop,width:isMobile?'auto':234,maxWidth:isMobile?'calc(100vw - 16px)':undefined,zIndex:230,animation:'sl 180ms cubic-bezier(0.34,1.56,0.64,1)',display:'flex',flexDirection:'column',background:WHITE,border:BORDER,borderRadius:14,overflow:'hidden',boxShadow:SHADOW_SM,maxHeight:isMobile?`calc(100vh - ${headerH+toolH+16}px)`:`calc(100vh - ${layerPanelTop + 8}px)`}}>
           {/* Header */}
-          <div style={{display:'flex',alignItems:'center',gap:7,padding:'11px 12px 9px',borderBottom:BORDER,userSelect:'none',flexShrink:0,background:DARK}}>
-            <Layers size={12} color="rgba(255,255,255,.8)" strokeWidth={2}/>
-            <span style={{fontFamily:"'Space Grotesk',sans-serif",fontWeight:800,fontSize:11,color:'rgba(255,255,255,.9)',flex:1,letterSpacing:-.2}}>Layers</span>
-            <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:'rgba(255,255,255,.35)',fontWeight:700}}>{layers.length}</span>
-            <button onClick={()=>setShowLayerPanel(false)} style={{background:'rgba(255,255,255,.1)',border:'none',cursor:'pointer',color:'rgba(255,255,255,.5)',display:'flex',padding:3,borderRadius:4,marginLeft:2}}>
+          <div style={{display:'flex',alignItems:'center',gap:7,padding:'11px 12px 9px',borderBottom:BORDER,userSelect:'none',flexShrink:0,background:WHITE}}>
+            <Layers size={13} color="var(--mp-ink)" strokeWidth={2}/>
+            <span style={{fontFamily:"'Geist',system-ui,sans-serif",fontWeight:600,fontSize:13,color:DARK,flex:1,letterSpacing:-.2}}>Layers</span>
+            <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:10,color:MUTED,fontWeight:500}}>{layers.length}</span>
+            <button onClick={()=>setShowLayerPanel(false)} className="sbtn" style={{border:'none',cursor:'pointer',color:MUTED,display:'flex',padding:4,borderRadius:6,marginLeft:2}}>
               <X size={10} strokeWidth={2.5}/>
             </button>
           </div>
 
           {/* Action toolbar */}
           <div style={{display:'flex',gap:3,padding:'8px 10px 6px',borderBottom:BORDER,flexShrink:0,background:CREAM}}>
-            <button onClick={addLayer} title="Add Layer" style={{flex:1,height:26,border:BORDER,borderRadius:7,background:LIME,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:.3}}>
+            <button onClick={addLayer} title="Add Layer" style={{flex:1,height:26,border:BORDER,borderRadius:7,background:LIME,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.3}}>
               <Plus size={10} strokeWidth={2.5}/> NEW
             </button>
             <button onClick={()=>imgImportRef.current?.click()} title="Import Image as Layer" style={{width:26,height:26,border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -2924,7 +2951,7 @@ export default function App() {
             <button onClick={()=>mergeDown(activeLayerIdx)} disabled={activeLayerIdx===0} title="Merge Down" style={{width:26,height:26,border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',opacity:activeLayerIdx===0?.3:1}}>
               <ChevronDown size={11} strokeWidth={2.5}/>
             </button>
-            <button onClick={flattenAll} disabled={layers.length<=1} title="Flatten All" style={{width:26,height:26,border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',opacity:layers.length<=1?.3:1,fontFamily:"'Space Mono',monospace",fontSize:7,fontWeight:700}}>
+            <button onClick={flattenAll} disabled={layers.length<=1} title="Flatten All" style={{width:26,height:26,border:BORDER,borderRadius:7,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',opacity:layers.length<=1?.3:1,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,fontWeight:500}}>
               <Layers size={10} strokeWidth={2}/>
             </button>
           </div>
@@ -2950,10 +2977,10 @@ export default function App() {
                   style={{
                     display:'flex',alignItems:'center',gap:0,
                     padding:'5px 10px',cursor:'pointer',
-                    background:isActive?`${LIME}28`:layerDropIdx===idx?`${DARK}08`:'transparent',
-                    borderLeft:`3px solid ${isActive?LIME:'transparent'}`,
+                    background:isActive?`${LIME}`:layerDropIdx===idx?`color-mix(in srgb,${DARK} 3%,transparent)`:'transparent',
+                    borderLeft:`3px solid ${isActive?ACCENT:'transparent'}`,
                     transition:'background 100ms',userSelect:'none',
-                    borderBottom:ri<layers.length-1?`1px solid ${DARK}0A`:'none',
+                    borderBottom:ri<layers.length-1?`1px solid color-mix(in srgb,${DARK} 4%,transparent)`:'none',
                   }}>
                   {/* Visibility */}
                   <button onClick={e=>{e.stopPropagation();updateLayerProp(idx,{visible:!layer.visible});}}
@@ -2971,7 +2998,7 @@ export default function App() {
                         onBlur={()=>{updateLayerProp(idx,{name:renameVal||layer.name});setRenamingId(null);}}
                         onKeyDown={e=>{if(e.key==='Enter'){updateLayerProp(idx,{name:renameVal||layer.name});setRenamingId(null);}if(e.key==='Escape')setRenamingId(null);}}
                         onClick={e=>e.stopPropagation()}
-                        style={{background:WHITE,border:BORDER,borderRadius:5,color:DARK,fontFamily:"'Space Grotesk',sans-serif",fontSize:11,fontWeight:600,padding:'2px 5px',outline:'none',width:'100%'}}/>
+                        style={{background:WHITE,border:BORDER,borderRadius:5,color:DARK,fontFamily:"'Geist',system-ui,sans-serif",fontSize:11,fontWeight:600,padding:'2px 5px',outline:'none',width:'100%'}}/>
                     ):(
                       <div onDoubleClick={e=>{e.stopPropagation();setRenamingId(layer.id);setRenameVal(layer.name);}}
                         style={{fontSize:11,fontWeight:isActive?700:500,color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.3}}>{layer.name}</div>
@@ -2981,14 +3008,14 @@ export default function App() {
                       <input type="range" min={0} max={100} value={layer.opacity}
                         onClick={e=>e.stopPropagation()}
                         onChange={e=>{e.stopPropagation();updateLayerProp(idx,{opacity:+e.target.value});}}
-                        style={{flex:1,height:2,background:`linear-gradient(to right,${isActive?DARK:'rgba(0,0,0,.4)'} ${layer.opacity}%,rgba(0,0,0,.08) 0%)`}}/>
-                      <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,flexShrink:0,width:24,textAlign:'right'}}>{layer.opacity}%</span>
+                        style={{flex:1,height:2,background:`linear-gradient(to right,${isActive?DARK:'rgba(0,0,0,.4)'} ${layer.opacity}%,var(--mp-track) 0%)`}}/>
+                      <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,flexShrink:0,width:24,textAlign:'right'}}>{layer.opacity}%</span>
                     </div>
                     {/* Blend mode selector */}
                     <div style={{marginTop:4}} onClick={e=>e.stopPropagation()}>
                       <select value={layer.blendMode||'normal'}
                         onChange={e=>{e.stopPropagation();updateLayerProp(idx,{blendMode:e.target.value});}}
-                        style={{width:'100%',background:isActive?`${DARK}0A`:CREAM,border:`1px solid ${DARK}18`,borderRadius:5,color:DARK,fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,padding:'2px 4px',cursor:'pointer',outline:'none',appearance:'none',textAlign:'center'}}>
+                        style={{width:'100%',background:isActive?`color-mix(in srgb,${DARK} 4%,transparent)`:CREAM,border:`1px solid color-mix(in srgb,${DARK} 10%,transparent)`,borderRadius:5,color:DARK,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,padding:'2px 4px',cursor:'pointer',outline:'none',appearance:'none',textAlign:'center'}}>
                         {BLEND_MODES.map(bm=>(
                           <option key={bm.id} value={bm.id}>{bm.label}</option>
                         ))}
@@ -3017,10 +3044,10 @@ export default function App() {
           {/* Footer info */}
           <div style={{borderTop:BORDER,padding:'6px 12px',flexShrink:0,background:CREAM,display:'flex',alignItems:'center',gap:6}}>
             <div style={{width:10,height:10,borderRadius:3,background:activeLayerIdx<layers.length?`rgba(${layers[activeLayerIdx]?.opacity||100}%,0%,0%,0)`:SAND,border:BORDER,flexShrink:0}}/>
-            <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
+            <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
               {layers[activeLayerIdx]?.name||'—'}
             </span>
-            <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,flexShrink:0}}>{canvasW}×{canvasH}</span>
+            <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:DARK,fontWeight:500,flexShrink:0}}>{canvasW}×{canvasH}</span>
           </div>
         </div>
       )}
@@ -3033,16 +3060,16 @@ export default function App() {
           <div className="mob-drawer">
             {/* Profile */}
             <div style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0 12px',borderBottom:BORDER,marginBottom:6}}>
-              <div style={{width:34,height:34,borderRadius:9,background:authUser?LIME:DARK,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:800,color:authUser?DARK:WHITE,fontFamily:"'Space Grotesk',sans-serif"}}>{userName.charAt(0).toUpperCase()}</div>
+              <div style={{width:34,height:34,borderRadius:9,background:authUser?LIME:DARK,border:BORDER,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:600,color:authUser?DARK:WHITE,fontFamily:"'Geist',system-ui,sans-serif"}}>{userName.charAt(0).toUpperCase()}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{userName}</div>
-                <div style={{fontSize:9,fontFamily:"'Space Mono',monospace",color:MUTED,fontWeight:700}}>{authUser?authUser.email:'Guest'}</div>
+                <div style={{fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",color:MUTED,fontWeight:500}}>{authUser?authUser.email:'Guest'}</div>
               </div>
               <button onClick={()=>setMobileDrawer(false)} style={{...ibtn('ghost'),width:28,height:28}}><X size={14} strokeWidth={2}/></button>
             </div>
 
             {/* Tool buttons */}
-            <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:4}}>TOOLS</div>
+            <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:4}}>TOOLS</div>
             {[
               {icon:<Move size={14}/>,label:'Transform [T]',active:isTransformMode,cb:()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}setMobileDrawer(false);}},
               {icon:<Lasso size={14}/>,label:'Lasso [L]',active:isLassoMode,cb:()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}setMobileDrawer(false);}},
@@ -3050,12 +3077,12 @@ export default function App() {
               {icon:<Spline size={14}/>,label:`Symmetry: ${symmetry}`,active:symmetry!=='none',cb:()=>{cycleSymmetry();}},
               {icon:<Expand size={14}/>,label:'Canvas Size',active:showCanvasSize,cb:()=>{setShowCanvasSize(true);setMobileDrawer(false);}},
             ].map((item,i)=>(
-              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:item.active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Space Grotesk',sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms'}}>
+              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:item.active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms'}}>
                 {item.icon}<span>{item.label}</span>
               </button>
             ))}
 
-            <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>PANELS</div>
+            <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>PANELS</div>
             {[
               {icon:<Paintbrush2 size={14}/>,label:'Brush Library',cb:()=>{setShowBrushLib(p=>!p);setMobileDrawer(false);}},
               {icon:<Settings2 size={14}/>,label:'Brush Settings',cb:()=>{setShowBrushAdv(p=>!p);setMobileDrawer(false);}},
@@ -3065,28 +3092,29 @@ export default function App() {
               {icon:<Music2 size={14}/>,label:'Music',cb:()=>{setShowMusic(p=>!p);setMobileDrawer(false);}},
               {icon:<ImageIcon size={14}/>,label:'Reference',cb:()=>{setShowRef(p=>!p);setMobileDrawer(false);}},
             ].map((item,i)=>(
-              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:(item as any).active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Space Grotesk',sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms',position:'relative'}}>
+              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:(item as any).active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms',position:'relative'}}>
                 {item.icon}<span>{item.label}</span>
-                {(item as any).active&&<span style={{marginLeft:'auto',width:6,height:6,borderRadius:'50%',background:LIME,border:`1.5px solid ${DARK}`}}/>}
+                {(item as any).active&&<span style={{marginLeft:'auto',width:6,height:6,borderRadius:'50%',background:LIME,border:`1px solid ${LINE_STRONG}`}}/>}
               </button>
             ))}
 
-            <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>VIEW</div>
+            <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>VIEW</div>
             {[
               {icon:<FlipHIcon size={14}/>,label:`Flip H${flipH?' (ON)':''}`,active:flipH,cb:()=>setFlipH(p=>!p)},
               {icon:<FlipVIcon size={14}/>,label:`Flip V${flipV?' (ON)':''}`,active:flipV,cb:()=>setFlipV(p=>!p)},
+              {icon:theme==='dark'?<Sun size={14}/>:<Moon size={14}/>,label:theme==='dark'?'Light theme':'Dark theme',active:false,cb:toggleTheme},
             ].map((item,i)=>(
-              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:item.active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Space Grotesk',sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms'}}>
+              <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:item.active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms'}}>
                 {item.icon}<span>{item.label}</span>
               </button>
             ))}
 
-            <div style={{fontFamily:"'Space Mono',monospace",fontSize:8,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>SURFACE</div>
+            <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:4,marginTop:8}}>SURFACE</div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:4}}>
               {SURFACES.map(s=>(
                 <button key={s.type} onClick={()=>setSurface(s.type)} style={{border:BORDER,borderRadius:8,padding:'8px 4px',background:surface===s.type?LIME:WHITE,color:DARK,cursor:'pointer',textAlign:'center',transition:'all 100ms'}}>
                   <SurfaceIcon type={s.type} size={12}/>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:7,fontWeight:700,marginTop:3,color:surface===s.type?DARK:MUTED}}>{s.label.toUpperCase()}</div>
+                  <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,fontWeight:500,marginTop:3,color:surface===s.type?DARK:MUTED}}>{s.label.toUpperCase()}</div>
                 </button>
               ))}
             </div>
@@ -3096,21 +3124,21 @@ export default function App() {
             {/* Flow slider in drawer */}
             <div style={{borderTop:BORDER,paddingTop:10,marginTop:8}}>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28}}>FLOW</span>
-                <input type="range" min={5} max={100} value={opacity} onChange={e=>setOpacity(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${DARK} ${(opacity-5)/95*100}%,rgba(0,0,0,.1) 0%)`}}/>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{opacity}%</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,width:28}}>FLOW</span>
+                <input type="range" min={5} max={100} value={opacity} onChange={e=>setOpacity(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${ACCENT} ${(opacity-5)/95*100}%,var(--mp-track) 0%)`}}/>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:DARK,fontWeight:500,width:26,textAlign:'right'}}>{opacity}%</span>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:6,marginTop:8}}>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28}}>SMTH</span>
-                <input type="range" min={0} max={100} value={stabilizer} onChange={e=>setStabilizer(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${DARK} ${stabilizer}%,rgba(0,0,0,.1) 0%)`}}/>
-                <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:DARK,fontWeight:700,width:26,textAlign:'right'}}>{stabilizer||'OFF'}</span>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,width:28}}>SMTH</span>
+                <input type="range" min={0} max={100} value={stabilizer} onChange={e=>setStabilizer(+e.target.value)} style={{flex:1,background:`linear-gradient(to right,${ACCENT} ${stabilizer}%,var(--mp-track) 0%)`}}/>
+                <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:DARK,fontWeight:500,width:26,textAlign:'right'}}>{stabilizer||'OFF'}</span>
               </div>
             </div>
 
             {/* Actions */}
             <div style={{display:'flex',gap:4,marginTop:6}}>
               <button onClick={()=>{handleClear();setMobileDrawer(false);}} style={{...ibtn('danger'),flexGrow:1,flexBasis:0,height:38,borderRadius:9,justifyContent:'center',gap:5}}><Trash2 size={12}/> Clear</button>
-              <button onClick={()=>{saveToGallery();setMobileDrawer(false);}} style={{flex:1,height:38,border:BORDER,borderRadius:9,background:'#1a9e5c',color:WHITE,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5,fontFamily:"'Space Grotesk',sans-serif",fontSize:11,fontWeight:700}}><LayoutGrid size={12}/> Save</button>
+              <button onClick={()=>{saveToGallery();setMobileDrawer(false);}} style={{flex:1,height:38,border:BORDER,borderRadius:9,background:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5,fontFamily:"'Geist',system-ui,sans-serif",fontSize:11,fontWeight:700}}><LayoutGrid size={12}/> Save</button>
             </div>
 
             <div style={{display:'flex',gap:4,marginTop:4}}>
@@ -3130,36 +3158,36 @@ export default function App() {
         return(
         <div style={{position:'fixed',inset:0,background:CREAM,display:'flex',zIndex:9000,animation:'fi 180ms ease',overflowY:'auto',padding:isMobile?'12px 0':'24px 0'}}>
           {/* Dot-grid background texture */}
-          <div style={{position:'fixed',inset:0,backgroundImage:`radial-gradient(circle, rgba(13,11,7,.07) 1px, transparent 1px)`,backgroundSize:'28px 28px',pointerEvents:'none'}}/>
+          <div style={{position:'fixed',inset:0,backgroundImage:`radial-gradient(circle, var(--mp-dot) 1px, transparent 1px)`,backgroundSize:'28px 28px',pointerEvents:'none'}}/>
           {/* margin:auto centres when there's room and scrolls from the top when there isn't */}
-          <div style={{position:'relative',margin:'auto',display:'flex',background:WHITE,border:BORDER,borderRadius:isMobile?16:22,boxShadow:`8px 8px 0 ${DARK}`,width:isMobile?540:960,maxWidth:'94vw',overflow:'hidden',flexShrink:0,animation:'su 260ms cubic-bezier(.22,1,.36,1)'}}>
+          <div style={{position:'relative',margin:'auto',display:'flex',background:WHITE,border:BORDER,borderRadius:isMobile?16:22,boxShadow:SHADOW,width:isMobile?540:960,maxWidth:'94vw',overflow:'hidden',flexShrink:0,animation:'su 260ms cubic-bezier(.22,1,.36,1)'}}>
 
             {/* ── Hero: what makes mepaint different */}
             {!isMobile&&(
-              <div style={{width:380,flexShrink:0,background:DARK,color:WHITE,padding:'34px 34px 30px',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',inset:0,backgroundImage:`radial-gradient(circle, rgba(196,255,69,.10) 1px, transparent 1px)`,backgroundSize:'22px 22px',pointerEvents:'none'}}/>
+              <div style={{width:380,flexShrink:0,background:HERO,color:'#fff',padding:'34px 34px 30px',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',inset:0,backgroundImage:`radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1px)`,backgroundSize:'22px 22px',pointerEvents:'none'}}/>
                 <div style={{position:'relative',display:'flex',alignItems:'baseline',userSelect:'none'}}>
-                  <span style={{fontSize:24,fontWeight:800,letterSpacing:-1,lineHeight:1}}>me</span>
+                  <span style={{fontSize:24,fontWeight:700,letterSpacing:-.8,lineHeight:1}}>me</span>
                   <span style={{fontSize:24,fontWeight:400,color:'#A9A294',letterSpacing:-.5,lineHeight:1}}>paint</span>
                 </div>
                 <div style={{position:'relative',margin:'38px 0 22px'}}>
-                  <MixDemo size={176} stroke={WHITE}/>
-                  <div style={{display:'flex',alignItems:'center',gap:7,marginTop:14,fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:.6,color:'rgba(255,255,255,.55)'}}>
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.blue,border:`1.5px solid ${WHITE}`}}/>BLUE +
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.yellow,border:`1.5px solid ${WHITE}`}}/>YELLOW =
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.mix,border:`1.5px solid ${WHITE}`}}/><span style={{color:LIME}}>GREEN</span>
+                  <MixDemo size={176} stroke="#fff"/>
+                  <div style={{display:'flex',alignItems:'center',gap:7,marginTop:14,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:10,fontWeight:500,letterSpacing:.4,color:'rgba(255,255,255,.55)'}}>
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.blue}}/>BLUE +
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.yellow}}/>YELLOW =
+                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.mix}}/><span style={{color:'#6FDDB2'}}>GREEN</span>
                   </div>
                 </div>
-                <h1 style={{position:'relative',fontSize:34,fontWeight:800,letterSpacing:-1.4,lineHeight:1.02,marginBottom:12}}>
-                  Paint that mixes like the <span style={{color:LIME}}>real thing.</span>
+                <h1 style={{position:'relative',fontSize:34,fontWeight:600,letterSpacing:-1.3,lineHeight:1.05,marginBottom:12}}>
+                  Paint that mixes like the <span style={{color:'#6FDDB2'}}>real thing.</span>
                 </h1>
-                <p style={{position:'relative',fontSize:13,lineHeight:1.55,color:'rgba(255,255,255,.62)',marginBottom:22,fontWeight:500}}>
+                <p style={{position:'relative',fontSize:13,lineHeight:1.55,color:'rgba(255,255,255,.6)',marginBottom:22,fontWeight:400}}>
                   Colours blend like physical pigment, not screen pixels, so your glazes and mixes come out the way they would on paper.
                 </p>
                 <div style={{position:'relative',display:'flex',flexDirection:'column',gap:9,marginTop:'auto'}}>
                   {['14 natural brushes + Procreate import','Layers, blend modes & textured papers','Frame-by-frame animation','Paint together in real time'].map(f=>(
-                    <div key={f} style={{display:'flex',alignItems:'center',gap:10,fontSize:12.5,fontWeight:600,color:'rgba(255,255,255,.86)'}}>
-                      <span style={{width:16,height:16,borderRadius:5,background:LIME,color:DARK,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Check size={10} strokeWidth={3.2}/></span>{f}
+                    <div key={f} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,fontWeight:500,color:'rgba(255,255,255,.86)'}}>
+                      <span style={{width:18,height:18,borderRadius:'50%',background:'rgba(111,221,178,.16)',color:'#6FDDB2',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Check size={10} strokeWidth={3.2}/></span>{f}
                     </div>
                   ))}
                 </div>
@@ -3172,19 +3200,19 @@ export default function App() {
                 {isMobile&&(
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
                     <div style={{display:'flex',alignItems:'baseline',userSelect:'none'}}>
-                      <span style={{fontSize:22,fontWeight:800,color:DARK,letterSpacing:-1,lineHeight:1}}>me</span>
+                      <span style={{fontSize:22,fontWeight:700,color:DARK,letterSpacing:-.8,lineHeight:1}}>me</span>
                       <span style={{fontSize:22,fontWeight:400,color:MUTED,letterSpacing:-.5,lineHeight:1}}>paint</span>
                     </div>
                     <MixDemo size={64}/>
                   </div>
                 )}
-                <h2 style={{fontWeight:800,fontSize:isMobile?22:28,color:DARK,letterSpacing:-1,lineHeight:1.1,marginBottom:6}}>Start a new canvas</h2>
-                <p style={{fontFamily:"'Space Mono',monospace",fontSize:9,color:MUTED,fontWeight:700,letterSpacing:.8}}>PICK A SIZE · YOU CAN CHANGE IT ANYTIME</p>
+                <h2 style={{fontWeight:600,fontSize:isMobile?22:28,color:DARK,letterSpacing:-.9,lineHeight:1.1,marginBottom:6}}>Start a new canvas</h2>
+                <p style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,color:MUTED,fontWeight:500,letterSpacing:.8}}>PICK A SIZE · YOU CAN CHANGE IT ANYTIME</p>
               </div>
 
               {/* Presets */}
               <div style={{marginBottom:18}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>PRESETS</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>PRESETS</div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:isMobile?5:8}}>
                   {CANVAS_PRESETS.map(p=>{
                     const sel=spW===p.w&&spH===p.h;
@@ -3193,12 +3221,12 @@ export default function App() {
                     const bh=Math.min(24,Math.round(24*Math.min(1,1/aspect)));
                     return(
                       <button key={p.label} onClick={()=>{setSpW(p.w);setSpH(p.h);}} className="lift" aria-pressed={sel}
-                        style={{border:BORDER,borderRadius:10,padding:isMobile?'8px 2px 6px':'11px 6px 9px',background:sel?LIME:WHITE,color:DARK,cursor:'pointer',textAlign:'center',display:'flex',flexDirection:'column',alignItems:'center',gap:isMobile?4:6,boxShadow:sel?SHADOW_SM:'none'}}>
+                        style={{border:sel?`1.5px solid ${ACCENT}`:BORDER,borderRadius:12,padding:isMobile?'8px 2px 6px':'11px 6px 9px',background:sel?LIME:WHITE,color:sel?ACCENT_INK:DARK,cursor:'pointer',textAlign:'center',display:'flex',flexDirection:'column',alignItems:'center',gap:isMobile?4:6}}>
                         <div style={{height:24,display:'flex',alignItems:'center'}}>
-                          <div style={{width:bw,height:bh,border:`1.5px solid ${sel?DARK:'rgba(0,0,0,.28)'}`,borderRadius:3,background:sel?'rgba(0,0,0,.12)':'rgba(0,0,0,.04)'}}/>
+                          <div style={{width:bw,height:bh,border:`1.5px solid ${sel?ACCENT:LINE_STRONG}`,borderRadius:3,background:sel?'color-mix(in srgb,var(--mp-accent) 14%,transparent)':SAND}}/>
                         </div>
-                        <div style={{fontSize:isMobile?9.5:11,fontWeight:800,fontFamily:"'Space Grotesk',sans-serif"}}>{p.label}</div>
-                        <div style={{fontFamily:"'Space Mono',monospace",fontSize:isMobile?6.5:7.5,color:sel?DARK:MUTED}}>{p.w}×{p.h}</div>
+                        <div style={{fontSize:isMobile?9.5:11.5,fontWeight:600,fontFamily:"'Geist',system-ui,sans-serif"}}>{p.label}</div>
+                        <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:isMobile?7:8.5,color:sel?ACCENT_INK:MUTED}}>{p.w}×{p.h}</div>
                       </button>
                     );
                   })}
@@ -3207,49 +3235,49 @@ export default function App() {
 
               {/* Custom */}
               <div style={{marginBottom:isMobile?16:22}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>CUSTOM SIZE</div>
+                <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>CUSTOM SIZE</div>
                 <div style={{display:'flex',gap:isMobile?8:10,alignItems:'center'}}>
                   <div style={{flex:1,position:'relative'}}>
-                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED}}>W</span>
-                    <input type="number" aria-label="Width in pixels" value={spW} onChange={e=>setSpW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
+                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED}}>W</span>
+                    <input type="number" aria-label="Width in pixels" value={spW} onChange={e=>setSpW(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,fontSize:14}}/>
                   </div>
-                  <span style={{fontSize:18,fontWeight:800,color:MUTED}}>×</span>
+                  <span style={{fontSize:18,fontWeight:600,color:MUTED}}>×</span>
                   <div style={{flex:1,position:'relative'}}>
-                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED}}>H</span>
-                    <input type="number" aria-label="Height in pixels" value={spH} onChange={e=>setSpH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Space Mono',monospace",fontWeight:700,fontSize:14}}/>
+                    <span style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED}}>H</span>
+                    <input type="number" aria-label="Height in pixels" value={spH} onChange={e=>setSpH(Math.max(64,Math.min(4096,+e.target.value)))} className="inp" style={{textAlign:'center',fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,fontSize:14}}/>
                   </div>
                   {/* Live aspect indicator */}
                   <div style={{flexShrink:0,display:isMobile?'none':'flex',alignItems:'center',gap:6}}>
                     <div style={{width:38,height:38,display:'flex',alignItems:'center',justifyContent:'center',border:BORDER,borderRadius:8,background:SAND}}>
-                      {(()=>{const a=spW/Math.max(1,spH);const bw=Math.min(24,Math.round(24*Math.min(1,a)));const bh=Math.min(24,Math.round(24*Math.min(1,1/a)));return<div style={{width:bw,height:bh,border:`1.5px solid ${DARK}`,borderRadius:2,background:'rgba(0,0,0,.08)',transition:'all 160ms ease'}}/>;})()}
+                      {(()=>{const a=spW/Math.max(1,spH);const bw=Math.min(24,Math.round(24*Math.min(1,a)));const bh=Math.min(24,Math.round(24*Math.min(1,1/a)));return<div style={{width:bw,height:bh,border:`1px solid ${LINE_STRONG}`,borderRadius:2,background:'rgba(0,0,0,.08)',transition:'all 160ms ease'}}/>;})()}
                     </div>
-                    <span style={{fontFamily:"'Space Mono',monospace",fontSize:8,color:MUTED,fontWeight:700,width:28}}>{(spW/Math.max(1,spH)).toFixed(2)}</span>
+                    <span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,color:MUTED,fontWeight:500,width:28}}>{(spW/Math.max(1,spH)).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
 
               {/* Confirm */}
               <button onClick={confirmStartupSize} className="lift"
-                style={{width:'100%',height:54,border:BORDER,borderRadius:12,background:LIME,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontFamily:"'Space Grotesk',sans-serif",fontSize:15,fontWeight:800,letterSpacing:-0.3,boxShadow:SHADOW_SM}}>
-                <Paintbrush2 size={17} strokeWidth={2.5}/>
+                style={{width:'100%',height:52,border:'none',borderRadius:14,background:ACCENT,color:ON_ACCENT,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:10,fontFamily:"'Geist',system-ui,sans-serif",fontSize:15,fontWeight:600,letterSpacing:-0.2,boxShadow:'0 1px 2px rgba(0,0,0,.12), 0 6px 18px -6px color-mix(in srgb,var(--mp-accent) 60%,transparent)'}}>
+                <Paintbrush2 size={17} strokeWidth={2}/>
                 Start painting · {spW} × {spH}
               </button>
 
               {/* Resume */}
               {recent.length>0&&(
                 <div style={{marginTop:isMobile?18:24,paddingTop:isMobile?14:18,borderTop:`1.5px dashed rgba(13,11,7,.2)`}}>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:9,fontWeight:700,color:MUTED,letterSpacing:1,marginBottom:9}}>OR PICK UP WHERE YOU LEFT OFF</div>
+                  <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:9}}>OR PICK UP WHERE YOU LEFT OFF</div>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:isMobile?6:8}}>
                     {recent.map(g=>(
                       <button key={g.id} onClick={()=>resumeFromGallery(g)} className="lift" title={`Continue “${g.name}”`}
                         style={{border:BORDER,borderRadius:10,overflow:'hidden',background:WHITE,cursor:'pointer',padding:0,textAlign:'left',display:'flex',flexDirection:'column'}}>
                         <div style={{aspectRatio:'4/3',width:'100%',background:CREAM,borderBottom:BORDER,position:'relative',overflow:'hidden'}}>
                           <img src={g.dataUrl} alt="" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
-                          {g.isAuto&&<span style={{position:'absolute',top:4,left:4,background:SAND,border:`1.5px solid ${DARK}`,borderRadius:4,fontFamily:"'Space Mono',monospace",fontSize:6.5,fontWeight:700,padding:'0 4px'}}>AUTO</span>}
+                          {g.isAuto&&<span style={{position:'absolute',top:4,left:4,background:SAND,border:`1px solid ${LINE_STRONG}`,borderRadius:4,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:6.5,fontWeight:500,padding:'0 4px'}}>AUTO</span>}
                         </div>
                         <div style={{padding:isMobile?'4px 5px':'6px 8px',minWidth:0,width:'100%'}}>
                           <div style={{fontSize:isMobile?9:10.5,fontWeight:700,color:DARK,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.name}</div>
-                          <div style={{fontFamily:"'Space Mono',monospace",fontSize:7,color:MUTED,marginTop:1}}>{new Date(g.createdAt).toLocaleDateString([],{month:'short',day:'numeric'})}</div>
+                          <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,color:MUTED,marginTop:1}}>{new Date(g.createdAt).toLocaleDateString([],{month:'short',day:'numeric'})}</div>
                         </div>
                       </button>
                     ))}
@@ -3273,11 +3301,11 @@ export default function App() {
         const cx=Math.max(R+28,Math.min(window.innerWidth-R-28,popPal.x)),cy=Math.max(R+28,Math.min(window.innerHeight-R-28,popPal.y));
         return(
           <div style={{position:'fixed',inset:0,zIndex:700}} onPointerDown={()=>setPopPal(null)} onContextMenu={e=>{e.preventDefault();setPopPal(null);}}>
-            <div onPointerDown={e=>e.stopPropagation()} style={{position:'absolute',left:cx,top:cy,width:R*2+48,height:R*2+48,borderRadius:'50%',background:'rgba(255,255,255,.94)',border:BORDER,boxShadow:SHADOW,backdropFilter:'blur(6px)',animation:'palIn 260ms cubic-bezier(.34,1.56,.64,1) both',transform:'translate(-50%,-50%)'}}>
+            <div onPointerDown={e=>e.stopPropagation()} style={{position:'absolute',left:cx,top:cy,width:R*2+48,height:R*2+48,borderRadius:'50%',background:'color-mix(in srgb,var(--mp-surface) 90%,transparent)',border:BORDER,boxShadow:SHADOW,backdropFilter:'blur(10px)',animation:'palIn 260ms cubic-bezier(.34,1.56,.64,1) both',transform:'translate(-50%,-50%)'}}>
               <div style={{position:'absolute',left:'50%',top:'50%',width:R*1.24,height:R*1.24,borderRadius:'50%',border:`1.5px dashed rgba(13,11,7,.18)`,transform:'translate(-50%,-50%)'}}/>
               {ringColors.map((c,i)=>{const a=i/ringColors.length*Math.PI*2-Math.PI/2;const sel=c.join()===color.join();return(
                 <button key={i} className="pal-dot" aria-label={`Colour rgb ${c.join(' ')}`} onClick={()=>{applyColor(c);setPopPal(null);}}
-                  style={{left:`calc(50% + ${Math.cos(a)*R}px)`,top:`calc(50% + ${Math.sin(a)*R}px)`,width:sel?30:26,height:sel?30:26,borderRadius:'50%',background:`rgb(${c.join(',')})`,border:sel?`3px solid ${LIME}`:BORDER,boxShadow:sel?`0 0 0 2px ${DARK}`:'none',animationDelay:`${i*14}ms`,padding:0}}/>
+                  style={{left:`calc(50% + ${Math.cos(a)*R}px)`,top:`calc(50% + ${Math.sin(a)*R}px)`,width:sel?30:26,height:sel?30:26,borderRadius:'50%',background:`rgb(${c.join(',')})`,border:sel?`3px solid ${ACCENT}`:BORDER,boxShadow:sel?`0 0 0 2px ${DARK}`:'none',animationDelay:`${i*14}ms`,padding:0}}/>
               );})}
               {brushes.map((b,i)=>{const a=i/brushes.length*Math.PI*2-Math.PI/2+Math.PI/brushes.length;const r=R*.52;const sel=!selectedCustom&&!eraserMode&&brushType===b.type;return(
                 <button key={b.type} className="pal-dot" title={b.label} aria-label={b.label} onClick={()=>{setBrushType(b.type);setSelectedCustom(null);setEraserMode(false);setPopPal(null);}}
@@ -3295,15 +3323,15 @@ export default function App() {
       {/* ══ BRUSH SIZE HUD ═══════════════════════════════════════════════════ */}
       {sizeHud&&!showStartupPicker&&(
         <div style={{position:'fixed',left:sideW+(window.innerWidth-sideW)/2,top:headerH+(window.innerHeight-headerH-animBottom)/2,zIndex:450,pointerEvents:'none',display:'flex',flexDirection:'column',alignItems:'center',gap:10,animation:'hudIn 140ms ease both'}}>
-          <div style={{width:Math.min(260,brushSize*zoom),height:Math.min(260,brushSize*zoom),borderRadius:'50%',border:`2px solid ${DARK}`,background:`rgba(${color.join(',')},.22)`,boxShadow:`0 0 0 2px ${WHITE}`}}/>
-          <span className="pill" style={{background:DARK,color:LIME}}>{brushSize} PX</span>
+          <div style={{width:Math.min(260,brushSize*zoom),height:Math.min(260,brushSize*zoom),borderRadius:'50%',border:`1px solid ${LINE_STRONG}`,background:`rgba(${color.join(',')},.22)`,boxShadow:`0 0 0 2px ${WHITE}`}}/>
+          <span className="pill" style={{background:DARK,color:WHITE,border:'none'}}>{brushSize} px</span>
         </div>
       )}
 
       <Toaster position="bottom-center" offset={animBottom+14} gap={8} toastOptions={{
-        style:{background:DARK,color:WHITE,border:`2px solid ${DARK}`,borderRadius:12,boxShadow:`4px 4px 0 ${LIME}`,fontFamily:"'Space Grotesk',sans-serif",fontSize:13,fontWeight:700,padding:'12px 14px'},
+        style:{background:DARK,color:WHITE,border:'none',borderRadius:14,boxShadow:SHADOW,fontFamily:"'Geist',system-ui,sans-serif",fontSize:13,fontWeight:500,padding:'12px 14px'},
         descriptionClassName:'toast-desc',
-        actionButtonStyle:{background:LIME,color:DARK,fontFamily:"'Space Grotesk',sans-serif",fontWeight:800,fontSize:11,borderRadius:7,border:`1.5px solid ${DARK}`},
+        actionButtonStyle:{background:ACCENT,color:ON_ACCENT,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:600,fontSize:11.5,borderRadius:8,border:'none'},
       }}/>
 
     </>

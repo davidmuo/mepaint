@@ -15,6 +15,7 @@ A browser-based painting studio where colour mixes like real pigment: blue and y
 - **Live rooms** with shared canvas, cursors and chat (Supabase Realtime).
 - **Gallery** with 5-minute autosave. You can resume any piece from the start screen.
 - **First-run guided tour.** Replay it any time from *Shortcuts* (`?`).
+- **Light and dark themes.** A soft light theme and a neutral graphite studio theme. It follows the OS setting until you pick one from the header toggle. The theme variables live in [`mepaint-theme.css`](src/styles/mepaint-theme.css).
 
 ## Keyboard
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pipette } from 'lucide-react';
-import { DARK, WHITE, MUTED, BORDER, LIME, MONO } from './tokens';
+import { MUTED, BORDER, LIME, MONO, ACCENT_INK } from './tokens';
 
 type RGB = [number, number, number];
 
@@ -73,12 +73,12 @@ export function ColorPicker({ rgb, onChange, onCommit, onEyedropper }: {
         onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) pickSV(e); }}
         onPointerUp={e => pickSV(e, true)}
         style={{
-          position: 'relative', height: 148, borderRadius: 10, border: BORDER, cursor: 'crosshair', touchAction: 'none',
+          position: 'relative', height: 148, borderRadius: 12, border: BORDER, cursor: 'crosshair', touchAction: 'none',
           background: `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,hsl(${h},100%,50%))`,
         }}>
         <div style={{
           position: 'absolute', left: `${s * 100}%`, top: `${(1 - v) * 100}%`, width: 16, height: 16, borderRadius: '50%',
-          transform: 'translate(-50%,-50%)', border: `2.5px solid ${WHITE}`, boxShadow: `0 0 0 1.5px ${DARK}, inset 0 0 0 1px rgba(0,0,0,.2)`,
+          transform: 'translate(-50%,-50%)', border: '2.5px solid #fff', boxShadow: '0 0 0 1px rgba(0,0,0,.25), 0 2px 6px rgba(0,0,0,.35)',
           background: `rgb(${cur.join(',')})`, pointerEvents: 'none',
         }}/>
       </div>
@@ -88,16 +88,16 @@ export function ColorPicker({ rgb, onChange, onCommit, onEyedropper }: {
         aria-label="Hue" style={{ width: '100%', margin: '12px 0 10px' }}/>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <div style={{ position: 'relative', flex: 1 }}>
-          <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontFamily: MONO, fontSize: 9, fontWeight: 700, color: MUTED, letterSpacing: .5 }}>HEX</span>
+          <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontFamily: MONO, fontSize: 9.5, fontWeight: 500, color: MUTED, letterSpacing: .4 }}>HEX</span>
           <input className="inp" value={hexDraft ?? toHex(rgb)} spellCheck={false}
             onChange={e => setHexDraft(e.target.value)}
             onBlur={() => { const p = hexDraft && parseHex(hexDraft); if (p) { const [nh, ns, nv] = rgbToHsv(p); emit(ns ? nh : h, ns, nv, true); } setHexDraft(null); }}
             onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-            style={{ paddingLeft: 42, fontFamily: MONO, fontWeight: 700, fontSize: 12, padding: '7px 10px 7px 42px' }}/>
+            style={{ paddingLeft: 42, fontFamily: MONO, fontWeight: 500, fontSize: 12.5, padding: '7px 10px 7px 42px' }}/>
         </div>
         {onEyedropper && (
           <button onClick={onEyedropper} title="Pick from canvas [Alt+E]"
-            style={{ width: 34, height: 34, border: BORDER, borderRadius: 8, background: LIME, color: DARK, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            style={{ width: 36, height: 36, border: 'none', borderRadius: 10, background: LIME, color: ACCENT_INK, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Pipette size={13} strokeWidth={2}/>
           </button>
         )}

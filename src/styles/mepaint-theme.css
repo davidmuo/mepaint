@@ -1,0 +1,61 @@
+/* ─── mepaint theme ───────────────────────────────────────────────────────────
+   Soft & airy light theme + neutral graphite "studio" dark theme.
+   <html data-theme> is set before first paint by the inline script in index.html
+   (stored choice, else the OS preference) and kept in sync by App.tsx.
+   Accent is the green that blue + yellow pigments mix into — the brand story. */
+
+:root,
+:root[data-theme="light"] {
+  --mp-bg: #F3F1EC;            /* workspace backdrop */
+  --mp-surface: #FFFFFF;       /* bars, panels, cards */
+  --mp-surface-2: #F5F3EF;     /* secondary fills, inputs, hover */
+  --mp-raised: #FFFFFF;        /* active segment / raised chip */
+  --mp-ink: #1E1C19;           /* primary text, inverted buttons */
+  --mp-muted: #8A857B;
+  --mp-line: rgba(30, 28, 25, .09);
+  --mp-line-strong: rgba(30, 28, 25, .16);
+  --mp-tint: #E2F3EA;          /* selected / active state fill */
+  --mp-accent: #1F8A65;        /* vivid accent: CTAs, focus, strokes */
+  --mp-accent-ink: #176A4E;    /* accent-coloured text/icons on tint */
+  --mp-on-accent: #FFFFFF;
+  --mp-danger: #E5484D;
+  --mp-track: rgba(30, 28, 25, .10);
+  --mp-dot: rgba(30, 28, 25, .075);
+  --mp-hero: #18181B;          /* fixed dark brand panel (start screen, tour) */
+  --mp-scrim: rgba(24, 22, 19, .34);
+  --mp-shadow-sm: 0 1px 2px rgba(30, 28, 25, .06), 0 3px 10px rgba(30, 28, 25, .06);
+  --mp-shadow-lg: 0 2px 6px rgba(30, 28, 25, .05), 0 18px 44px rgba(30, 28, 25, .14);
+  --mp-canvas-shadow: 0 1px 3px rgba(30, 28, 25, .08), 0 24px 60px -20px rgba(30, 28, 25, .28);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --mp-bg: #141416;
+  --mp-surface: #1F1F22;
+  --mp-surface-2: #29292D;
+  --mp-raised: #34343A;
+  --mp-ink: #ECEAE6;
+  --mp-muted: #8E8A83;
+  --mp-line: rgba(255, 255, 255, .07);
+  --mp-line-strong: rgba(255, 255, 255, .13);
+  --mp-tint: #1D3A2F;
+  --mp-accent: #4CC79A;
+  --mp-accent-ink: #7FDDB9;
+  --mp-on-accent: #08160F;
+  --mp-danger: #FF6369;
+  --mp-track: rgba(255, 255, 255, .12);
+  --mp-dot: rgba(255, 255, 255, .045);
+  --mp-hero: #0E0E10;
+  --mp-scrim: rgba(0, 0, 0, .58);
+  --mp-shadow-sm: 0 1px 2px rgba(0, 0, 0, .4), 0 3px 10px rgba(0, 0, 0, .25);
+  --mp-shadow-lg: 0 2px 6px rgba(0, 0, 0, .35), 0 22px 52px rgba(0, 0, 0, .55);
+  --mp-canvas-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 28px 70px -20px rgba(0, 0, 0, .8);
+  color-scheme: dark;
+}
+
+/* Smooth cross-fade when the user flips themes (not on first paint) */
+:root.theme-anim *,
+:root.theme-anim *::before,
+:root.theme-anim *::after {
+  transition: background-color 260ms ease, border-color 260ms ease, color 200ms ease, box-shadow 260ms ease !important;
+}

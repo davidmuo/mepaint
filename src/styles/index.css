@@ -3,6 +3,7 @@
 @import 'tailwindcss/preflight.css';
 @import 'tailwindcss/utilities.css';
 @import './theme.css';
+@import './mepaint-theme.css';
 
 /* Custom scrollbar — editorial warm aesthetic */
 ::-webkit-scrollbar {
@@ -15,10 +16,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(13, 11, 7, 0.12);
+  background: var(--mp-line-strong);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(13, 11, 7, 0.22);
+  background: var(--mp-muted);
 }
