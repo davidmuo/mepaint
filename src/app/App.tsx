@@ -2228,8 +2228,8 @@ export default function App() {
 
   // ── Onboarding tour script — mobile swaps the sidebar stops for the menu drawer
   const tourSteps:TourStep[]=[
-    {hero:<MixDemo size={150} stroke="#fff"/>,chip:'WELCOME',title:'Paint that mixes like the real thing',
-      body:<>In mepaint, colours blend like real pigment: blue and yellow make <b>green</b>, not muddy grey. Here's a 60-second tour.</>},
+    {hero:<MixDemo size={150} stroke="#fff"/>,chip:'WELCOME',title:'Paint together. Mix for real.',
+      body:<>Invite friends onto one canvas, and watch colours blend like real pigment: blue and yellow make <b>green</b>. Here's a 60-second tour.</>},
     {target:'canvas',title:'This is your canvas',
       body:isMobile?'Paint with your finger or a stylus. Zoom with the buttons up top, and drag the dark bar to move the canvas.'
         :'Paint with a mouse, pen or tablet. Stylus pressure is supported. Drag the dark bar to move it, and right-click anywhere on it for a quick palette.',
@@ -3580,11 +3580,11 @@ export default function App() {
                   <span style={{fontSize:24,fontWeight:700,letterSpacing:-.8,lineHeight:1}}>me</span>
                   <span style={{fontSize:24,fontWeight:400,color:'#A9A294',letterSpacing:-.5,lineHeight:1}}>paint</span>
                 </div>
-                {/* Just the idea: the mix, and one line saying it */}
+                {/* Just the idea: two painters, one canvas, colours that really mix */}
                 <div style={{marginTop:'auto'}}>
                   <MixDemo size={176} stroke="#fff"/>
                   <h1 style={{fontSize:34,fontWeight:600,letterSpacing:-1.3,lineHeight:1.05,marginTop:28}}>
-                    Paint that mixes like the <span style={{color:'#6FDDB2'}}>real thing.</span>
+                    Paint together.<br/><span style={{color:'#6FDDB2'}}>Mix for real.</span>
                   </h1>
                 </div>
               </div>
