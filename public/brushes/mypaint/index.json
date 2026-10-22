@@ -1,0 +1,349 @@
+{
+ "license": "CC0-1.0",
+ "source": "https://github.com/mypaint/mypaint-brushes",
+ "brushes": [
+  {
+   "id": "deevad-2b-pencil",
+   "name": "2B pencil",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/2B_pencil"
+  },
+  {
+   "id": "deevad-4h-pencil",
+   "name": "4H pencil",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/4H_pencil"
+  },
+  {
+   "id": "tanda-pencil-8b",
+   "name": "Pencil 8b",
+   "category": "Sketch & ink",
+   "author": "tanda",
+   "source": "tanda/pencil-8b"
+  },
+  {
+   "id": "ramon-sketch-1",
+   "name": "Sketch 1",
+   "category": "Sketch & ink",
+   "author": "ramon",
+   "source": "ramon/Sketch_1"
+  },
+  {
+   "id": "deevad-pen",
+   "name": "Pen",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/pen"
+  },
+  {
+   "id": "deevad-liner",
+   "name": "Liner",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/liner"
+  },
+  {
+   "id": "deevad-soft-dip-pen",
+   "name": "Soft dip pen",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/soft-dip-pen"
+  },
+  {
+   "id": "classic-calligraphy",
+   "name": "Calligraphy",
+   "category": "Sketch & ink",
+   "author": "classic",
+   "source": "classic/calligraphy"
+  },
+  {
+   "id": "kaerhon-v1-inkster-l",
+   "name": "Inkster l",
+   "category": "Sketch & ink",
+   "author": "kaerhon_v1",
+   "source": "kaerhon_v1/inkster_l"
+  },
+  {
+   "id": "deevad-ballpen",
+   "name": "Ballpen",
+   "category": "Sketch & ink",
+   "author": "deevad",
+   "source": "deevad/ballpen"
+  },
+  {
+   "id": "deevad-brush",
+   "name": "Brush",
+   "category": "Paint",
+   "author": "deevad",
+   "source": "deevad/brush"
+  },
+  {
+   "id": "deevad-basic-digital-brush",
+   "name": "Basic digital brush",
+   "category": "Paint",
+   "author": "deevad",
+   "source": "deevad/basic_digital_brush"
+  },
+  {
+   "id": "ramon-classic-paint",
+   "name": "Classic Paint",
+   "category": "Paint",
+   "author": "ramon",
+   "source": "ramon/Classic_Paint"
+  },
+  {
+   "id": "tanda-oil-01-paint",
+   "name": "Oil 01 paint",
+   "category": "Paint",
+   "author": "tanda",
+   "source": "tanda/oil-01-paint"
+  },
+  {
+   "id": "tanda-oil-03-paint",
+   "name": "Oil 03 paint",
+   "category": "Paint",
+   "author": "tanda",
+   "source": "tanda/oil-03-paint"
+  },
+  {
+   "id": "tanda-acrylic-03-paint",
+   "name": "Acrylic 03 paint",
+   "category": "Paint",
+   "author": "tanda",
+   "source": "tanda/acrylic-03-paint"
+  },
+  {
+   "id": "tanda-acrylic-05-paint",
+   "name": "Acrylic 05 paint",
+   "category": "Paint",
+   "author": "tanda",
+   "source": "tanda/acrylic-05-paint"
+  },
+  {
+   "id": "classic-bulk",
+   "name": "Bulk",
+   "category": "Paint",
+   "author": "classic",
+   "source": "classic/bulk"
+  },
+  {
+   "id": "classic-impressionism",
+   "name": "Impressionism",
+   "category": "Paint",
+   "author": "classic",
+   "source": "classic/impressionism"
+  },
+  {
+   "id": "deevad-rigger-brush",
+   "name": "Rigger brush",
+   "category": "Paint",
+   "author": "deevad",
+   "source": "deevad/rigger_brush"
+  },
+  {
+   "id": "dieterle-flat2-1",
+   "name": "Flat2",
+   "category": "Paint",
+   "author": "Dieterle",
+   "source": "Dieterle/Flat2#1"
+  },
+  {
+   "id": "dieterle-fan-1",
+   "name": "Fan",
+   "category": "Paint",
+   "author": "Dieterle",
+   "source": "Dieterle/Fan#1"
+  },
+  {
+   "id": "kaerhon-v1-wet-paint-sm",
+   "name": "Wet paint sm",
+   "category": "Paint",
+   "author": "kaerhon_v1",
+   "source": "kaerhon_v1/wet_paint_sm"
+  },
+  {
+   "id": "deevad-watercolor-glazing",
+   "name": "Watercolor glazing",
+   "category": "Watercolour",
+   "author": "deevad",
+   "source": "deevad/watercolor_glazing"
+  },
+  {
+   "id": "deevad-watercolor-expressive",
+   "name": "Watercolor expressive",
+   "category": "Watercolour",
+   "author": "deevad",
+   "source": "deevad/watercolor_expressive"
+  },
+  {
+   "id": "deevad-large-watercolor-fringe",
+   "name": "Large watercolor fringe",
+   "category": "Watercolour",
+   "author": "deevad",
+   "source": "deevad/large_watercolor_fringe"
+  },
+  {
+   "id": "tanda-watercolor-02-paint",
+   "name": "Watercolor 02 paint",
+   "category": "Watercolour",
+   "author": "tanda",
+   "source": "tanda/watercolor-02-paint"
+  },
+  {
+   "id": "tanda-water-01",
+   "name": "Water 01",
+   "category": "Watercolour",
+   "author": "tanda",
+   "source": "tanda/water-01"
+  },
+  {
+   "id": "tanda-charcoal-01",
+   "name": "Charcoal 01",
+   "category": "Dry media",
+   "author": "tanda",
+   "source": "tanda/charcoal-01"
+  },
+  {
+   "id": "tanda-charcoal-03",
+   "name": "Charcoal 03",
+   "category": "Dry media",
+   "author": "tanda",
+   "source": "tanda/charcoal-03"
+  },
+  {
+   "id": "deevad-chalk",
+   "name": "Chalk",
+   "category": "Dry media",
+   "author": "deevad",
+   "source": "deevad/chalk"
+  },
+  {
+   "id": "ramon-pastel-1",
+   "name": "Pastel 1",
+   "category": "Dry media",
+   "author": "ramon",
+   "source": "ramon/Pastel_1"
+  },
+  {
+   "id": "deevad-blending",
+   "name": "Blending",
+   "category": "Blend & smudge",
+   "author": "deevad",
+   "source": "deevad/blending"
+  },
+  {
+   "id": "deevad-grainy-blending",
+   "name": "Grainy blending",
+   "category": "Blend & smudge",
+   "author": "deevad",
+   "source": "deevad/grainy_blending"
+  },
+  {
+   "id": "classic-blending-knife",
+   "name": "Blending knife",
+   "category": "Blend & smudge",
+   "author": "classic",
+   "source": "classic/blending_knife"
+  },
+  {
+   "id": "classic-smudge",
+   "name": "Smudge",
+   "category": "Blend & smudge",
+   "author": "classic",
+   "source": "classic/smudge"
+  },
+  {
+   "id": "dieterle-blender",
+   "name": "Blender",
+   "category": "Blend & smudge",
+   "author": "Dieterle",
+   "source": "Dieterle/Blender"
+  },
+  {
+   "id": "ramon-smear",
+   "name": "Smear",
+   "category": "Blend & smudge",
+   "author": "ramon",
+   "source": "ramon/Smear"
+  },
+  {
+   "id": "tanda-oil-01-clean",
+   "name": "Oil 01 clean",
+   "category": "Blend & smudge",
+   "author": "tanda",
+   "source": "tanda/oil-01-clean"
+  },
+  {
+   "id": "deevad-airbrush",
+   "name": "Airbrush",
+   "category": "Air & texture",
+   "author": "deevad",
+   "source": "deevad/airbrush"
+  },
+  {
+   "id": "deevad-spray",
+   "name": "Spray",
+   "category": "Air & texture",
+   "author": "deevad",
+   "source": "deevad/spray"
+  },
+  {
+   "id": "ramon-clouds",
+   "name": "Clouds",
+   "category": "Air & texture",
+   "author": "ramon",
+   "source": "ramon/Clouds"
+  },
+  {
+   "id": "tanda-splatter-02",
+   "name": "Splatter 02",
+   "category": "Air & texture",
+   "author": "tanda",
+   "source": "tanda/splatter-02"
+  },
+  {
+   "id": "tanda-texture-06",
+   "name": "Texture 06",
+   "category": "Air & texture",
+   "author": "tanda",
+   "source": "tanda/texture-06"
+  },
+  {
+   "id": "experimental-fur",
+   "name": "Fur",
+   "category": "Air & texture",
+   "author": "experimental",
+   "source": "experimental/fur"
+  },
+  {
+   "id": "classic-long-grass",
+   "name": "Long grass",
+   "category": "Air & texture",
+   "author": "classic",
+   "source": "classic/long_grass"
+  },
+  {
+   "id": "experimental-leaves",
+   "name": "Leaves",
+   "category": "Air & texture",
+   "author": "experimental",
+   "source": "experimental/leaves"
+  },
+  {
+   "id": "deevad-kneaded-eraser",
+   "name": "Kneaded eraser",
+   "category": "Erasers",
+   "author": "deevad",
+   "source": "deevad/kneaded_eraser"
+  },
+  {
+   "id": "deevad-large-hard-eraser",
+   "name": "Large hard eraser",
+   "category": "Erasers",
+   "author": "deevad",
+   "source": "deevad/large_hard_eraser"
+  }
+ ]
+}
