@@ -6,10 +6,20 @@ import { Tour, type TourStep } from './components/Tour';
 import { ColorPicker } from './components/ColorPicker';
 import { MixDemo, MIX_COLORS } from './components/MixDemo';
 import { Toaster, toast } from 'sonner';
+import { curveLUT, loadDynamics, saveDynamics, type Dynamics } from './engine/dynamics';
+import { samplePatch, advancePatch, patchIndex, newSmudgeState, loadSmudge, saveSmudge, type SmudgeConfig, type SmudgeState } from './engine/smudge';
+import { shadeImpasto, DEPOSIT } from './engine/impasto';
+import { BrushSettings } from './components/BrushSettings';
+import { MixingPalette } from './components/MixingPalette';
+import { MyPaintLibrary } from './components/MyPaintLibrary';
+import { MyPaintBrush, setBrushColor } from './mypaint/brush';
+import { LayerSurface } from './mypaint/surface';
+import { loadIndex, loadBrush, renderPreview, type MpEntry } from './mypaint/library';
+import { Row, Toggle, microLabel } from './components/controls';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import {
-  Music2, ImageIcon, HelpCircle, Undo2, Redo2, Trash2, Download, Compass, Sun, Moon,
+  Music2, ImageIcon, HelpCircle, Undo2, Redo2, Trash2, Download, Compass, Sun, Moon, Ruler, RotateCw, Palette,
   Play, Pause, X, Upload, Blend,
   ChevronRight, Eye, EyeOff, ZoomIn, ZoomOut, Users,
   Pipette, Spline, Copy, Check, Link, Settings2, LayoutGrid,
@@ -42,17 +52,26 @@ type Symmetry    = 'none' | 'vertical' | 'horizontal' | 'both';
 type SurfaceType = 'smooth' | 'coldpress' | 'canvas' | 'newsprint' | 'toned';
 type Workspace   = 'paint' | 'animate';
 type AuthMode    = 'signin' | 'signup';
-interface StampSettings { brushType: BrushType; brushSize: number; color: [number,number,number]; opacity: number; eraser?: boolean; layerIdx?: number }
-interface BrushAdvanced { sizeJitter: number; opacityJitter: number; spacingMult: number }
+/** Per-dab texture extras: impasto thickness, paper grain, dual (secondary) tip */
+interface StampFx { th: number; gr: number; du: BrushType|'none'; ds: number; da: number }
+interface StampSettings { brushType: BrushType; brushSize: number; color: [number,number,number]; opacity: number; eraser?: boolean; layerIdx?: number; fx?: StampFx; sm?: SmudgeConfig; sym?: Symmetry }
+interface BrushAdvanced {
+  sizeJitter: number; opacityJitter: number; spacingMult: number;
+  /** 0–100 impasto paint thickness */ thickness: number;
+  /** 0–200 % of the paper surface's tooth */ grain: number;
+  dualTip: BrushType|'none'; /** 25–300 % */ dualScale: number; /** 0–100 */ dualAmount: number;
+}
 interface RemoteCursor { x: number; y: number; color: string; name: string }
-interface StrokeMsg { uid: string; x1: number; y1: number; x2: number; y2: number; bt: BrushType; bs: number; col: [number,number,number]; op: number; er?: boolean; li?: number }
+interface StrokeMsg { uid: string; x1: number; y1: number; x2: number; y2: number; bt: BrushType; bs: number; col: [number,number,number]; op: number; er?: boolean; li?: number; fx?: StampFx; sm?: SmudgeConfig; sy?: Symmetry }
+/** A collaborator's MyPaint stroke event (start carries the brush setup) */
+interface MpMsg { uid:string; b:string; x:number; y:number; p:number; tx:number; ty:number; dt:number; s?:1; e?:1; c?:[number,number,number]; r?:number; f?:number; er?:number; li?:number; sy?:Symmetry }
 interface CursorMsg { uid: string; x: number; y: number; name?: string; color?: string }
 interface ChatMsg { uid: string; name: string; color: string; text: string; ts: number }
 interface GalleryEntry { id: string; name: string; dataUrl: string; createdAt: number; isAuto?: boolean }
 interface AuthUser { id: string; email: string; name: string }
 interface CustomBrush { id: string; name: string; mask: Float32Array; spacing: number; source: 'procreate'|'photoshop'; previewUrl?: string }
-interface Layer { id: string; name: string; opacity: number; visible: boolean; locked: boolean; blendMode: string; buf: Uint8ClampedArray | null }
-interface UndoSnapshot { bufs: (Uint8ClampedArray|null)[]; meta: {id:string;name:string;opacity:number;visible:boolean;locked:boolean;blendMode:string}[]; activeIdx: number }
+interface Layer { id: string; name: string; opacity: number; visible: boolean; locked: boolean; blendMode: string; buf: Uint8ClampedArray | null; /** impasto height, allocated on first thick dab */ hbuf?: Uint8ClampedArray | null }
+interface UndoSnapshot { bufs: (Uint8ClampedArray|null)[]; hbufs: (Uint8ClampedArray|null)[]; meta: {id:string;name:string;opacity:number;visible:boolean;locked:boolean;blendMode:string}[]; activeIdx: number }
 
 
 // ─── Surface definitions ──────────────────────────────────────────────────────
@@ -156,20 +175,20 @@ const BRUSH_DEFS=[
   {type:'gouache'    as BrushType,label:'Gouache',   key:'' ,category:'Paint'},
 ];
 const DEFAULT_ADV: Record<BrushType,BrushAdvanced>={
-  'soft-round': {sizeJitter:0,  opacityJitter:0,  spacingMult:1.0},
-  'flat':       {sizeJitter:3,  opacityJitter:5,  spacingMult:1.0},
-  'bristle':    {sizeJitter:22, opacityJitter:28, spacingMult:1.0},
-  'watercolor': {sizeJitter:16, opacityJitter:38, spacingMult:1.0},
-  'thick-paint':{sizeJitter:8,  opacityJitter:8,  spacingMult:1.0},
-  'eraser':     {sizeJitter:0,  opacityJitter:0,  spacingMult:1.0},
-  'pencil':     {sizeJitter:4,  opacityJitter:10, spacingMult:1.0},
-  'chalk':      {sizeJitter:18, opacityJitter:30, spacingMult:1.2},
-  'marker':     {sizeJitter:0,  opacityJitter:5,  spacingMult:1.0},
-  'ink':        {sizeJitter:2,  opacityJitter:0,  spacingMult:1.0},
-  'charcoal':   {sizeJitter:20, opacityJitter:25, spacingMult:1.0},
-  'sponge':     {sizeJitter:12, opacityJitter:20, spacingMult:1.5},
-  'fan':        {sizeJitter:8,  opacityJitter:10, spacingMult:1.0},
-  'gouache':    {sizeJitter:3,  opacityJitter:5,  spacingMult:1.0},
+  'soft-round': {sizeJitter:0,  opacityJitter:0,  spacingMult:1.0,thickness:0,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'flat':       {sizeJitter:3,  opacityJitter:5,  spacingMult:1.0,thickness:30,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'bristle':    {sizeJitter:22, opacityJitter:28, spacingMult:1.0,thickness:42,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'watercolor': {sizeJitter:16, opacityJitter:38, spacingMult:1.0,thickness:0,grain:120,dualTip:'none',dualScale:100,dualAmount:0},
+  'thick-paint':{sizeJitter:8,  opacityJitter:8,  spacingMult:1.0,thickness:72,grain:35,dualTip:'none',dualScale:100,dualAmount:0},
+  'eraser':     {sizeJitter:0,  opacityJitter:0,  spacingMult:1.0,thickness:0,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'pencil':     {sizeJitter:4,  opacityJitter:10, spacingMult:1.0,thickness:0,grain:140,dualTip:'none',dualScale:100,dualAmount:0},
+  'chalk':      {sizeJitter:18, opacityJitter:30, spacingMult:1.2,thickness:0,grain:160,dualTip:'none',dualScale:100,dualAmount:0},
+  'marker':     {sizeJitter:0,  opacityJitter:5,  spacingMult:1.0,thickness:0,grain:60,dualTip:'none',dualScale:100,dualAmount:0},
+  'ink':        {sizeJitter:2,  opacityJitter:0,  spacingMult:1.0,thickness:0,grain:40,dualTip:'none',dualScale:100,dualAmount:0},
+  'charcoal':   {sizeJitter:20, opacityJitter:25, spacingMult:1.0,thickness:0,grain:170,dualTip:'sponge',dualScale:140,dualAmount:55},
+  'sponge':     {sizeJitter:12, opacityJitter:20, spacingMult:1.5,thickness:12,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'fan':        {sizeJitter:8,  opacityJitter:10, spacingMult:1.0,thickness:28,grain:100,dualTip:'none',dualScale:100,dualAmount:0},
+  'gouache':    {sizeJitter:3,  opacityJitter:5,  spacingMult:1.0,thickness:34,grain:70,dualTip:'none',dualScale:100,dualAmount:0},
 };
 const CANVAS_PRESETS = [
   { label:'512 sq',  w:512,  h:512  },{ label:'1024 sq', w:1024, h:1024 },
@@ -178,6 +197,10 @@ const CANVAS_PRESETS = [
   { label:'A4 Land', w:1123, h:794  },{ label:'Twitter', w:1200, h:628  },
 ];
 const TOUR_KEY = 'mepaint-tour-v1';
+const NO_FX: StampFx = { th:0, gr:100, du:'none', ds:100, da:0 };
+type Pt = { x:number; y:number };
+const normAngle=(a:number)=>((a+180)%360+360)%360-180;
+interface Assist { on:boolean; snap:boolean; mode:'1pt'|'2pt'; vp1:Pt; vp2:Pt }
 
 
 // ─── Brush SVG Icons ──────────────────────────────────────────────────────────
@@ -211,6 +234,14 @@ function SurfaceIcon({type,size=13}:{type:SurfaceType;size?:number}){
     case 'newsprint': return(<svg viewBox="0 0 14 14" style={s} fill="none" stroke="currentColor" strokeWidth="1.1"><line x1="1" y1="2" x2="13" y2="2"/><line x1="1" y1="4.5" x2="9" y2="4.5"/><line x1="1" y1="7" x2="13" y2="7"/><line x1="1" y1="9.5" x2="11" y2="9.5"/></svg>);
     case 'toned':     return(<svg viewBox="0 0 14 14" style={s} fill="currentColor" opacity=".5"><rect x="1" y="1" width="12" height="12" rx="2"/></svg>);
   }
+}
+
+// ─── Copy a rect of one layer's own pixels (not the lit composite) ───────────
+function layerRegion(layer:Layer|undefined,px:number,py:number,pw:number,ph:number,W:number):ImageData{
+  const out=new ImageData(pw,ph);
+  if(!layer?.buf) return out;
+  for(let row=0;row<ph;row++){const s=((py+row)*W+px)*4;out.data.set(layer.buf.subarray(s,s+pw*4),row*pw*4);}
+  return out;
 }
 
 // ─── Sidebar tooltip — label + shortcut keycap, slides out to the right ─────────
@@ -293,9 +324,17 @@ export default function App() {
   const ds = useRef({
     isDrawing:false, isPanning:false, isSpaceHeld:false,
     lastX:0, lastY:0, panStartX:0, panStartY:0, panStartPX:0, panStartPY:0,
-    smudgeColor:null as number[]|null, pressure:1.0,
+    pressure:1.0,
     // Stabilizer: smoothed brush position trails the raw pointer (rawX/rawY)
     sx:0, sy:0, rawX:0, rawY:0,
+    // Pointer speed (canvas px/ms, smoothed) for speed dynamics; wet-smudge state per mirror
+    speed:0, lastT:0, smudge:[] as SmudgeState[],
+    // Perspective snapping: stroke origin + the guide direction it locked onto
+    strokeX:0, strokeY:0, snapDir:null as null|{ox:number;oy:number;dx:number;dy:number},
+    // Shift+Space drag rotates the view around the canvas centre
+    isRotating:false, rotCx:0, rotCy:0, rotStartAng:0, rotStart:0,
+    // Active MyPaint stroke: its surface and last event time
+    mpSurf:null as LayerSurface|null, mpT:0, mpP:0,
   });
   // Collab
   const myUid   = useRef((() => { let id=sessionStorage.getItem('mepaint-uid'); if(!id){id=crypto.randomUUID();sessionStorage.setItem('mepaint-uid',id);} return id; })());
@@ -320,11 +359,16 @@ export default function App() {
   const activePointerIdRef = useRef<number|null>(null);
   const toolStateRef       = useRef({brushType:'soft-round' as BrushType, brushSize:28, color:[0,0,0] as [number,number,number], opacity:82});
   const toCanvasRef        = useRef<(cx:number,cy:number)=>{x:number,y:number}>(()=>({x:0,y:0}));
-  const interpolateRef     = useRef<(x1:number,y1:number,x2:number,y2:number,s:StampSettings,local?:boolean)=>void>(()=>{});
+  const interpolateRef     = useRef<(x1:number,y1:number,x2:number,y2:number,s:StampSettings,local?:boolean,uid?:string)=>void>(()=>{});
   const broadcastStrokeRef = useRef<(x1:number,y1:number,x2:number,y2:number,s:StampSettings)=>void>(()=>{});
 
   // ── State: tool
-  const [brushType,  setBrushType]  = useState<BrushType>('soft-round');
+  const [brushType,  setBrushTypeRaw]  = useState<BrushType>('soft-round');
+  // ── MyPaint brush (libmypaint port). Choosing any built-in or imported brush switches it off.
+  const [mpActive, setMpActive] = useState<MpEntry|null>(null);
+  const mpRef = useRef<{entry:MpEntry;brush:MyPaintBrush;eraser:number}|null>(null);
+  const clearMp=useCallback(()=>{if(mpRef.current){mpRef.current=null;setMpActive(null);}},[]);
+  const setBrushType=useCallback((t:BrushType)=>{clearMp();setBrushTypeRaw(t);},[clearMp]);
   const [brushSize,  setBrushSize]  = useState(28);
   const [opacity,    setOpacity]    = useState(82);
   const [smudgeMode, setSmudgeMode] = useState(false);
@@ -450,10 +494,15 @@ export default function App() {
   const [layerDragIdx,    setLayerDragIdx]    = useState<number|null>(null);
   const [layerDropIdx,    setLayerDropIdx]    = useState<number|null>(null);
   const [customBrushes,   setCustomBrushes]   = useState<CustomBrush[]>(()=>{try{const s=localStorage.getItem('mepaint-custom-brushes-v1');if(!s)return[];const arr=JSON.parse(s);return arr.map((b:Omit<CustomBrush,'mask'>)=>({...b,mask:new Float32Array(128*128)}));}catch{return [];}});
-  const [selectedCustom,  setSelectedCustom]  = useState<CustomBrush|null>(null);
+  const [selectedCustom,  setSelectedCustomRaw]  = useState<CustomBrush|null>(null);
+  const setSelectedCustom=useCallback((c:CustomBrush|null)=>{if(c)clearMp();setSelectedCustomRaw(c);},[clearMp]);
   const [brushImportLoading, setBrushImportLoading] = useState(false);
   const [brushImportError,   setBrushImportError]   = useState('');
-  const [brushLibTab,     setBrushLibTab]     = useState<'builtin'|'imported'>('builtin');
+  const [brushLibTab,     setBrushLibTab]     = useState<'builtin'|'imported'|'mypaint'>('builtin');
+  const [mpIndex, setMpIndex] = useState<MpEntry[]|null>(null);
+  const [mpErr, setMpErr] = useState<string|null>(null);
+  const [mpPreviews, setMpPreviews] = useState<Record<string,string>>({});
+  const mpPreviewDone = useRef(new Set<string>());
   // sync selectedCustom to ref (must be AFTER selectedCustom useState above)
   useEffect(()=>{ selectedCustomRef.current=selectedCustom; },[selectedCustom]);
   const [refImage,      setRefImage]      = useState<string|null>(null);
@@ -470,6 +519,8 @@ export default function App() {
   // ── State: draggable windows
   const [musicPos,      setMusicPos]      = useState(()=>({x:62,y:Math.max(80,window.innerHeight-380)}));
   const [refPos,        setRefPos]        = useState(()=>({x:Math.max(0,window.innerWidth-264),y:56}));
+  const [showMixer,     setShowMixer]     = useState(false);
+  const [mixerPos,      setMixerPos]      = useState(()=>({x:70,y:Math.max(60,window.innerHeight-500)}));
 
   // ── Mobile responsive
   const [isMobile, setIsMobile] = useState(()=>window.innerWidth<768);
@@ -503,6 +554,48 @@ export default function App() {
   const stabilizerRef = useRef(stabilizer);
   useEffect(()=>{stabilizerRef.current=stabilizer;try{localStorage.setItem('mepaint-stabilizer',String(stabilizer));}catch{}},[stabilizer]);
   const [popPal, setPopPal] = useState<{x:number;y:number}|null>(null);
+  // ── Brush engine settings (global): pressure curve, wet smudge, impasto lighting
+  const [dynamics, setDynamicsState] = useState<Dynamics>(loadDynamics);
+  const dynRef = useRef(dynamics);
+  const lutRef = useRef(curveLUT(dynamics.curve));
+  const setDynamics = useCallback((patch:Partial<Dynamics>)=>setDynamicsState(prev=>{const next={...prev,...patch};dynRef.current=next;if(patch.curve)lutRef.current=curveLUT(next.curve);saveDynamics(next);return next;}),[]);
+  const [smudgeCfg, setSmudgeCfgState] = useState<SmudgeConfig>(loadSmudge);
+  const smudgeCfgRef = useRef(smudgeCfg);
+  const setSmudgeCfg = useCallback((patch:Partial<SmudgeConfig>)=>setSmudgeCfgState(prev=>{const next={...prev,...patch};smudgeCfgRef.current=next;saveSmudge(next);return next;}),[]);
+  const [impastoLight, setImpastoLight] = useState(()=>{try{return localStorage.getItem('mepaint-impasto')!=='off';}catch{return true;}});
+  const impastoLightRef = useRef(impastoLight);
+  const smudgeModeRef = useRef(false);
+  useEffect(()=>{smudgeModeRef.current=smudgeMode;},[smudgeMode]);
+  const symmetryRef = useRef<Symmetry>('none');
+  useEffect(()=>{symmetryRef.current=symmetry;},[symmetry]);
+  // Collaborators' smudge strokes each carry their own paint
+  const remoteSmudge = useRef(new Map<string,SmudgeState[]>());
+  // ── View: canvas rotation, wrap-around tiling, perspective assistant
+  const [rotation, setRotation] = useState(0);
+  const rotRef = useRef(0);
+  useEffect(()=>{rotRef.current=rotation;},[rotation]);
+  const [wrapMode, setWrapMode] = useState(false);
+  const wrapRef = useRef(false);
+  useEffect(()=>{wrapRef.current=wrapMode;},[wrapMode]);
+  const [wrapTile, setWrapTile] = useState<string|null>(null);
+  const [assist, setAssistState] = useState<Assist>({on:false,snap:true,mode:'1pt',vp1:{x:0,y:0},vp2:{x:0,y:0}});
+  const assistRef = useRef(assist);
+  const setAssist = useCallback((patch:Partial<Assist>)=>setAssistState(prev=>{const next={...prev,...patch};assistRef.current=next;return next;}),[]);
+  const [showView, setShowView] = useState(false);
+  const viewPopRef = useRef<HTMLDivElement>(null);
+  const viewBtnRef = useRef<HTMLButtonElement>(null);
+  const [viewPos, setViewPos] = useState<{right:number}>({right:8});
+  const vpDragRef = useRef<number|null>(null);
+  const openView=useCallback(()=>{const r=viewBtnRef.current?.getBoundingClientRect();if(r)setViewPos({right:Math.max(8,window.innerWidth-r.right)});setShowView(p=>!p);},[]);
+  // Vanishing points default to sensible spots the first time guides are switched on
+  const toggleAssist=useCallback(()=>{
+    const c=canvasRef.current,w=c?.offsetWidth??1024,h=c?.offsetHeight??768;
+    setAssistState(prev=>{const fresh=prev.vp1.x===0&&prev.vp1.y===0;const next={...prev,on:!prev.on,...(fresh?{vp1:{x:w/2,y:h*.38},vp2:{x:w*1.2,y:h*.4}}:{})};assistRef.current=next;return next;});
+  },[]);
+  const setAssistMode=useCallback((m:'1pt'|'2pt')=>{
+    const c=canvasRef.current,w=c?.offsetWidth??1024,h=c?.offsetHeight??768;
+    setAssist(m==='2pt'?{mode:m,vp1:{x:-w*.2,y:h*.4},vp2:{x:w*1.2,y:h*.4}}:{mode:m,vp1:{x:w/2,y:h*.38}});
+  },[setAssist]);
   // ── Transient brush-size preview while resizing
   const [sizeHud, setSizeHud] = useState(false);
   const sizeHudMounted = useRef(false);
@@ -514,12 +607,19 @@ export default function App() {
   const currentSurface = SURFACES.find(s=>s.type===surface)!;
   const [h,s,l]=hsl;
   const colorCss=`rgb(${color.join(',')})`;
-  const activeBrushLabel=selectedCustom?.name ?? BRUSH_DEFS.find(b=>b.type===brushType)?.label??'';
+  const activeBrushLabel=mpActive?.name ?? selectedCustom?.name ?? BRUSH_DEFS.find(b=>b.type===brushType)?.label??'';
   const spaceHeld=ds.current.isSpaceHeld;
   const sideW=isMobile?0:62;
   const headerH=isMobile?42:48;
   const toolH=isMobile?56:76;
   const animBottom=workspace==='animate'?(isMobile?120:148):toolH;
+  // Canvas sits under the panel's drag bar; the view rotates about the canvas centre
+  const barH=isMobile?21:25;
+  const rotPivot={x:canvasW/2,y:barH+canvasH/2};
+  const canvasToWorkspace=(x:number,y:number)=>{
+    const th=rotation*Math.PI/180,c=Math.cos(th),s=Math.sin(th),lx=x-rotPivot.x,ly=y+barH-rotPivot.y;
+    return{x:pan.x+zoom*(rotPivot.x+lx*c-ly*s),y:pan.y+zoom*(rotPivot.y+lx*s+ly*c)};
+  };
 
   // ── Click-outside detection
   useEffect(()=>{
@@ -529,11 +629,12 @@ export default function App() {
       if(showProfile&&profilePopRef.current&&!profilePopRef.current.contains(e.target as Node))setShowProfile(false);
       if(showBrushLib&&brushLibRef.current&&!brushLibRef.current.contains(e.target as Node)&&!(brushLibBtnRef.current&&brushLibBtnRef.current.contains(e.target as Node)))setShowBrushLib(false);
       if(showColorPanel&&colorPanelRef.current&&!colorPanelRef.current.contains(e.target as Node)&&!(colorBtnRef.current&&colorBtnRef.current.contains(e.target as Node)))setShowColorPanel(false);
+      if(showView&&viewPopRef.current&&!viewPopRef.current.contains(e.target as Node)&&!(viewBtnRef.current&&viewBtnRef.current.contains(e.target as Node)))setShowView(false);
       // Layer panel stays open (explicit close via X button)
     };
     document.addEventListener('mousedown',onDown);
     return()=>document.removeEventListener('mousedown',onDown);
-  },[showSurface,showBrushAdv,showProfile,showBrushLib,showColorPanel]);
+  },[showSurface,showBrushAdv,showProfile,showBrushLib,showColorPanel,showView]);
 
   // ── Check auth session
   useEffect(()=>{
@@ -721,15 +822,18 @@ export default function App() {
 
 
 
-  // ── RAF flush — composites all visible layers into the canvas dirty rect
-  const flushCanvas=useCallback(()=>{
-    rafRef.current=null;
-    const d=dirtyRef.current;if(d.x1>=d.x2||d.y1>=d.y2) return;
-    const canvas=canvasRef.current;if(!canvas) return;
-    const W=canvas.width,H=canvas.height;
-    const x1=Math.max(0,Math.floor(d.x1)),y1=Math.max(0,Math.floor(d.y1));
-    const x2=Math.min(W,Math.ceil(d.x2)),y2=Math.min(H,Math.ceil(d.y2));
-    const rw=x2-x1,rh=y2-y1;if(rw<=0||rh<=0) return;
+  // ── Wrap-around preview tiles: snapshot the canvas at most ~3×/s while painting
+  const wrapTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const scheduleWrapTile=useCallback(()=>{
+    if(wrapTimer.current) return;
+    wrapTimer.current=setTimeout(()=>{wrapTimer.current=null;canvasRef.current?.toBlob(b=>{if(!b) return;const url=URL.createObjectURL(b);setWrapTile(prev=>{if(prev)URL.revokeObjectURL(prev);return url;});},'image/jpeg',.85);},320);
+  },[]);
+  useEffect(()=>{if(wrapMode)scheduleWrapTile();else setWrapTile(prev=>{if(prev)URL.revokeObjectURL(prev);return null;});},[wrapMode,scheduleWrapTile]);
+
+  // ── Composite all visible layers over the paper for a canvas-pixel rect.
+  // `shade` adds impasto lighting; flatten/merge pass false so light is never baked into paint.
+  const compositeRect=useCallback((x1:number,y1:number,rw:number,rh:number,shade:boolean)=>{
+    const W=canvasRef.current!.width,H=canvasRef.current!.height;
     const llist=layersRef.current;
     // Paper bg colour
     const surf=SURFACES.find(s=>s.type===surfaceRef.current)!;
@@ -760,9 +864,27 @@ export default function App() {
         }
       }
     }
-    canvas.getContext('2d')!.putImageData(new ImageData(comp,rw,rh),x1,y1);
-    d.x1=Infinity;d.y1=Infinity;d.x2=-Infinity;d.y2=-Infinity;
+    if(shade&&impastoLightRef.current&&workspaceRef.current!=='animate'){
+      const hbufs=llist.filter(l=>l.visible&&l.hbuf).map(l=>l.hbuf!);
+      shadeImpasto(comp,rw,rh,x1,y1,W,H,hbufs,window.devicePixelRatio||1);
+    }
+    return comp;
   },[]);
+
+  // ── RAF flush — composites the dirty rect into the visible canvas
+  const flushCanvas=useCallback(()=>{
+    rafRef.current=null;
+    const d=dirtyRef.current;if(d.x1>=d.x2||d.y1>=d.y2) return;
+    const canvas=canvasRef.current;if(!canvas) return;
+    const W=canvas.width,H=canvas.height;
+    const x1=Math.max(0,Math.floor(d.x1)),y1=Math.max(0,Math.floor(d.y1));
+    const x2=Math.min(W,Math.ceil(d.x2)),y2=Math.min(H,Math.ceil(d.y2));
+    const rw=x2-x1,rh=y2-y1;
+    d.x1=Infinity;d.y1=Infinity;d.x2=-Infinity;d.y2=-Infinity;
+    if(rw<=0||rh<=0) return;
+    canvas.getContext('2d')!.putImageData(new ImageData(compositeRect(x1,y1,rw,rh,true),rw,rh),x1,y1);
+    if(wrapRef.current)scheduleWrapTile();
+  },[compositeRect,scheduleWrapTile]);
   const scheduleFlush=useCallback(()=>{if(rafRef.current!==null) return;rafRef.current=requestAnimationFrame(flushCanvas);},[flushCanvas]);
 
   // ── Center canvas in container (defined early — referenced in useEffect below)
@@ -1058,7 +1180,10 @@ export default function App() {
     return mask;
   },[]);
 
-  const stamp=useCallback((x:number,y:number,settings:StampSettings,localSmudge?:number[]|null)=>{
+  const getMask=useCallback((key:BrushType)=>{let m=brushMasks.current.get(key);if(!m){m=generateMask(key);brushMasks.current.set(key,m);}return m;},[generateMask]);
+
+  // ── One dab. `smudge` switches it into wet-smudge mode (carried paint instead of brush colour).
+  const stamp=useCallback((x:number,y:number,settings:StampSettings,smudge?:SmudgeState|null)=>{
     if(!canvasRef.current) return;
     // Determine target layer — remote strokes may specify a layer index
     const targetIdx=settings.layerIdx!==undefined?Math.max(0,Math.min(settings.layerIdx,layersRef.current.length-1)):activeLayerIdxRef.current;
@@ -1067,29 +1192,47 @@ export default function App() {
     const canvas=canvasRef.current,ratio=window.devicePixelRatio||1,buf=curLayer.buf;
     const W=canvas.width,H=canvas.height;
     const{brushType:bt,brushSize:bs,color:col,opacity:op}=settings;
+    const fx=settings.fx??NO_FX;
     const sx=Math.floor(x*ratio),sy=Math.floor(y*ratio),radius=Math.max(1,Math.floor(bs*ratio/2));
     const bx1=Math.max(0,sx-radius),by1=Math.max(0,sy-radius),bx2=Math.min(W,sx+radius),by2=Math.min(H,sy+radius);
     if(bx2<=bx1||by2<=by1) return;
-    dirtyRef.current.x1=Math.min(dirtyRef.current.x1,bx1);dirtyRef.current.y1=Math.min(dirtyRef.current.y1,by1);
-    dirtyRef.current.x2=Math.max(dirtyRef.current.x2,bx2);dirtyRef.current.y2=Math.max(dirtyRef.current.y2,by2);
-    const cb=selectedCustomRef.current;
-    const maskKey=cb?`custom:${cb.id}`:bt;
-    let mask=brushMasks.current.get(maskKey);
-    if(!mask){mask=cb?cb.mask:generateMask(bt);brushMasks.current.set(maskKey,mask);}
-    const MS=128,eff=op/100,isWc=bt==='watercolor';
     const isErasing=settings.eraser!==undefined?settings.eraser:(eraserModeRef.current||bt==='eraser');
+    // Impasto heights: allocated lazily the first time this layer gets thick paint
+    const depositH=!isErasing&&!smudge&&fx.th>0;
+    if(depositH&&!curLayer.hbuf)curLayer.hbuf=new Uint8ClampedArray(W*H);
+    const hb=curLayer.hbuf??null;
+    // Lighting reads neighbouring heights, so a changed ridge re-shades one pixel beyond the dab
+    const pad=hb?3:0;
+    dirtyRef.current.x1=Math.min(dirtyRef.current.x1,bx1-pad);dirtyRef.current.y1=Math.min(dirtyRef.current.y1,by1-pad);
+    dirtyRef.current.x2=Math.max(dirtyRef.current.x2,bx2+pad);dirtyRef.current.y2=Math.max(dirtyRef.current.y2,by2+pad);
+    const cb=selectedCustomRef.current;
+    const mask=cb?(brushMasks.current.get(`custom:${cb.id}`)??(brushMasks.current.set(`custom:${cb.id}`,cb.mask),cb.mask)):getMask(bt);
+    const MS=128,eff=op/100,isWc=bt==='watercolor';
     const surf=SURFACES.find(s=>s.type===surfaceRef.current)!;
-    // Eraser now gets surface texture too (textured erase with chalk/bristle etc.)
-    const texStr=bt==='thick-paint'?surf.texStrength*.35:surf.texStrength;
+    // Paper grain: per-brush multiplier on the surface's tooth (eraser keeps texture too)
+    const texStr=Math.min(1,surf.texStrength*fx.gr/100);
     const texBuf=SURFACE_TEXTURES[surfaceRef.current];
     const paper=surf.paper;
     const isBackground=targetIdx===0;
+    // Dual brush: a second tip at its own scale with a fresh random phase each dab breaks up the edge
+    const dual=fx.du!=='none'&&fx.da>0?getMask(fx.du):null;
+    const dScale=100/Math.max(10,fx.ds),dOx=Math.random()*MS,dOy=Math.random()*MS,dAmt=fx.da/100;
+    const dep=fx.th/100*DEPOSIT;
+    // Wet smudge: sample what's under the dab before painting, lay down the carried patch, then pick up
+    const cfg=settings.sm??smudgeCfgRef.current;
+    let P:Float32Array|null=null,fresh:Float32Array|null=null;
+    if(smudge){
+      fresh=samplePatch(buf,hb,W,H,sx,sy,radius,cfg.mode);
+      if(!smudge.patch){advancePatch(smudge,fresh.slice(),cfg,col);}
+      P=smudge.patch;
+    }
     for(let py=by1;py<by2;py++) for(let px=bx1;px<bx2;px++){
       const dx=px-sx,dy=py-sy;
       const mx=Math.floor((dx/radius+1)*MS/2),my=Math.floor((dy/radius+1)*MS/2);
       if(mx<0||mx>=MS||my<0||my>=MS) continue;
       let ma=mask[my*MS+mx];if(ma<.004) continue;
       if(isWc)ma*=.9+Math.random()*.2;
+      if(dual){ma*=1-dAmt+dAmt*dual[(((my*dScale+dOy)|0)%MS)*MS+(((mx*dScale+dOx)|0)%MS)];if(ma<.004) continue;}
       if(texStr>0){const tv=texBuf[(py%SURFACE_H)*SURFACE_W+(px%SURFACE_W)];ma*=1-texStr*(1-tv);}
       const pi=(py*W+px)*4;
       if(lassoMaskRef.current&&!lassoMaskRef.current[py*W+px]) continue;
@@ -1108,46 +1251,101 @@ export default function App() {
           buf[pi+3]=Math.max(0,buf[pi+3]-(ea*255))|0;
           nc=cc;
         }
-      } else if(localSmudge!==undefined){
-        if(localSmudge){ds.current.smudgeColor=smudgeMix(ds.current.smudgeColor||cc,cc,.22);nc=smudgeMix(cc,ds.current.smudgeColor!,Math.min(1,ea*1.2));}else nc=cc;
-        if(!isBackground){const na=ea+dst_a*(1-ea);buf[pi+3]=Math.min(255,na*255)|0;}
+        if(hb){const hi=py*W+px;hb[hi]=hb[hi]*(1-ea);}
+      } else if(P){
+        const k=patchIndex(dx,dy,radius),pa=P[k+3];
+        const pc=[P[k],P[k+1],P[k+2]];
+        // Weight by the carried paint's alpha so smudging into empty areas thins out naturally
+        let a=ea;
+        if(isBackground){a=ea*pa;}
+        else{
+          const na=dst_a*(1-ea)+pa*ea;
+          if(na<.003){buf[pi+3]=0;continue;}
+          a=dst_a<.01?1:pa<.01?0:Math.min(1,ea*pa/na);
+          buf[pi+3]=Math.min(255,na*255)|0;
+        }
+        if(a<.003) continue;
+        // Different paints meeting mix like pigment; near-identical ones just blend
+        const diff=Math.abs(cc[0]-pc[0])+Math.abs(cc[1]-pc[1])+Math.abs(cc[2]-pc[2]);
+        nc=diff>30&&a>.03&&a<.97?pigmentMix(cc,pc,a):[cc[0]+(pc[0]-cc[0])*a,cc[1]+(pc[1]-cc[1])*a,cc[2]+(pc[2]-cc[2])*a];
+        if(hb){const hi=py*W+px;hb[hi]=hb[hi]*(1-ea)+P[k+4]*ea;}
       } else {
         if(!isBackground&&dst_a<0.01){nc=[col[0],col[1],col[2]];}else{nc=pigmentMix(cc,col,ea);}
         if(!isBackground){const na=ea+dst_a*(1-ea);buf[pi+3]=Math.min(255,na*255)|0;}
+        // Height = half smooth dome (paint body), half brush texture (bristle grooves),
+        // so overlapping dabs build a ridge instead of repeating the tip's pattern
+        if(depositH){const hi=py*W+px,dome=Math.max(0,1-(dx*dx+dy*dy)/(radius*radius));hb![hi]=Math.min(255,hb![hi]+(dome*.55+ma*.45)*eff*dep);}
       }
       buf[pi]=Math.max(0,Math.min(255,nc[0]))|0;buf[pi+1]=Math.max(0,Math.min(255,nc[1]))|0;buf[pi+2]=Math.max(0,Math.min(255,nc[2]))|0;
     }
+    if(smudge&&fresh)advancePatch(smudge,fresh,cfg,col);
     isDirtyRef.current=true;scheduleFlush();
-  },[generateMask,scheduleFlush]);
+  },[getMask,scheduleFlush]);
 
-  const interpolate=useCallback((x1:number,y1:number,x2:number,y2:number,settings:StampSettings,isLocal=true)=>{
+  // ── Wrap-around: a dab near an edge also lands on the opposite side, so tiles stay seamless
+  const stampWrapped=useCallback((x:number,y:number,s:StampSettings,sm:SmudgeState|null)=>{
+    const canvas=canvasRef.current;if(!canvas) return;
+    if(!wrapRef.current){stamp(x,y,s,sm);return;}
+    const CW=canvas.offsetWidth,CH=canvas.offsetHeight,r=s.brushSize/2+1;
+    const wx=((x%CW)+CW)%CW,wy=((y%CH)+CH)%CH;
+    for(let oy=-1;oy<=1;oy++) for(let ox=-1;ox<=1;ox++){
+      const px=wx+ox*CW,py=wy+oy*CH;
+      if(px+r<0||py+r<0||px-r>CW||py-r>CH) continue;
+      stamp(px,py,s,sm);
+    }
+  },[stamp]);
+
+  // ── A dab plus its symmetry mirrors; each mirror carries its own wet paint
+  const stampAll=useCallback((x:number,y:number,s:StampSettings,sms:SmudgeState[]|null)=>{
+    const canvas=canvasRef.current;if(!canvas) return;
+    const CW=canvas.offsetWidth,CH=canvas.offsetHeight,sym=s.sym??'none';
+    const sm=(i:number)=>sms?(sms[i]??(sms[i]=newSmudgeState())):null;
+    stampWrapped(x,y,s,sm(0));
+    if(sym==='vertical'||sym==='both')stampWrapped(CW-x,y,s,sm(1));
+    if(sym==='horizontal'||sym==='both')stampWrapped(x,CH-y,s,sm(2));
+    if(sym==='both')stampWrapped(CW-x,CH-y,s,sm(3));
+  },[stampWrapped]);
+
+  // ── Local dab settings: pressure curve, speed thinning, jitter, texture extras
+  const fxFor=useCallback((bt:BrushType):StampFx=>{const a=brushAdvancedRef.current[bt];return{th:a.thickness,gr:a.grain,du:a.dualTip,ds:a.dualScale,da:a.dualAmount};},[]);
+  const dynamicsFor=useCallback((s:StampSettings):StampSettings=>{
+    const adv=brushAdvancedRef.current[s.brushType],dyn=dynRef.current;
+    const pc=lutRef.current[Math.round(Math.max(0,Math.min(1,ds.current.pressure))*255)];
+    const sJ=1+(Math.random()-.5)*(adv?.sizeJitter??0)*.02,oJ=1+(Math.random()-.5)*(adv?.opacityJitter??0)*.02;
+    const spd=dyn.speedThin>0?1-dyn.speedThin/100*Math.min(1,ds.current.speed/2.5)*.75:1;
+    return{...s,
+      brushSize:s.brushSize*(dyn.pressureSize?.06+pc*.94:1)*Math.max(.1,sJ)*spd,
+      opacity:s.opacity*(dyn.pressureFlow?.04+pc*.96:1)*Math.max(.05,oJ),
+      fx:fxFor(s.brushType),sym:symmetryRef.current};
+  },[fxFor]);
+
+  const interpolate=useCallback((x1:number,y1:number,x2:number,y2:number,settings:StampSettings,isLocal=true,uid?:string)=>{
     const dx=x2-x1,dy=y2-y1,dist=Math.sqrt(dx*dx+dy*dy);
     const adv=brushAdvancedRef.current[settings.brushType];
-    const spacing=Math.max(settings.brushSize*BRUSH_SPACING[settings.brushType]*(isLocal?(adv?.spacingMult??1):1),.5);
-    const steps=Math.ceil(dist/spacing),pressure=isLocal?ds.current.pressure:1.0;
-    // Power curve gives natural tablet feel — more sensitivity in mid-range
-    const pc=Math.pow(Math.max(0,Math.min(1,pressure)),0.55);
+    let sms:SmudgeState[]|null=null;
+    if(isLocal){if(smudgeModeRef.current)sms=ds.current.smudge;}
+    else if(settings.sm&&uid){sms=remoteSmudge.current.get(uid)??[];remoteSmudge.current.set(uid,sms);}
+    // Smudge dabs sit closer together so dragged paint stays continuous
+    const spacing=Math.max(settings.brushSize*BRUSH_SPACING[settings.brushType]*(isLocal?(adv?.spacingMult??1):1)*(sms?.6:1),.5);
+    const steps=Math.ceil(dist/spacing);
     // Handle zero-length strokes (single tap / initial stamp) for remote users
-    if(steps===0&&!isLocal){stamp(x1,y1,settings,undefined);return;}
+    if(steps===0&&!isLocal){stampAll(x1,y1,settings,sms);return;}
     for(let i=1;i<=steps;i++){
       const t=i/steps,sx=x1+dx*t,sy=y1+dy*t;
-      if(isLocal){
-        const sJ=1+(Math.random()-.5)*(adv?.sizeJitter??0)*.02,oJ=1+(Math.random()-.5)*(adv?.opacityJitter??0)*.02;
-        const eff:StampSettings={...settings,brushSize:settings.brushSize*(0.06+pc*0.94)*Math.max(.1,sJ),opacity:settings.opacity*(0.04+pc*0.96)*Math.max(.05,oJ)};
-        stamp(sx,sy,eff,smudgeMode?ds.current.smudgeColor:undefined);
-        const canvas=canvasRef.current;
-        if(canvas){const CW=canvas.offsetWidth,CH=canvas.offsetHeight;if(symmetry==='vertical'||symmetry==='both')stamp(CW-sx,sy,eff);if(symmetry==='horizontal'||symmetry==='both')stamp(sx,CH-sy,eff);if(symmetry==='both')stamp(CW-sx,CH-sy,eff);}
-      }else{stamp(sx,sy,settings,undefined);}
+      stampAll(sx,sy,isLocal?dynamicsFor(settings):settings,sms);
     }
-  },[stamp,smudgeMode,symmetry]);
+  },[stampAll,dynamicsFor]);
 
   const toCanvas=useCallback((clientX:number,clientY:number)=>{
     const canvas=canvasRef.current;if(!canvas) return{x:0,y:0};
     const rect=canvas.getBoundingClientRect();
-    // Derive scale from DOM directly — avoids stale vpRef.zoom on HiDPI screens.
-    const scaleX=rect.width/canvas.offsetWidth||1;
-    const scaleY=rect.height/canvas.offsetHeight||1;
-    let x=(clientX-rect.left)/scaleX,y=(clientY-rect.top)/scaleY;
+    const w=canvas.offsetWidth,h=canvas.offsetHeight;
+    // The rotated canvas's bounding box stays centred on the canvas, and its size gives the
+    // zoom (derived from the DOM, so it's never a frame stale). Un-rotate around that centre.
+    const th=rotRef.current*Math.PI/180,c=Math.cos(th),s=Math.sin(th);
+    const scale=rect.width/(w*Math.abs(c)+h*Math.abs(s))||1;
+    const vx=(clientX-(rect.left+rect.width/2))/scale,vy=(clientY-(rect.top+rect.height/2))/scale;
+    let x=vx*c+vy*s+w/2,y=-vx*s+vy*c+h/2;
     if(flipHRef.current)x=canvas.offsetWidth-x;
     if(flipVRef.current)y=canvas.offsetHeight-y;
     return{x,y};
@@ -1174,6 +1372,7 @@ export default function App() {
 
   const captureSnapshot=useCallback(():UndoSnapshot=>({
     bufs:layersRef.current.map(l=>l.buf?new Uint8ClampedArray(l.buf):null),
+    hbufs:layersRef.current.map(l=>l.hbuf?new Uint8ClampedArray(l.hbuf):null),
     meta:layersRef.current.map(({id,name,opacity,visible,locked,blendMode})=>({id,name,opacity,visible,locked,blendMode:blendMode||'normal'})),
     activeIdx:activeLayerIdxRef.current,
   }),[]);
@@ -1185,7 +1384,7 @@ export default function App() {
     syncHist();
   },[captureSnapshot,syncHist]);
   const restoreSnapshot=useCallback((snap:UndoSnapshot)=>{
-    const restored:Layer[]=snap.meta.map((m,i)=>({...m,buf:snap.bufs[i]}));
+    const restored:Layer[]=snap.meta.map((m,i)=>({...m,buf:snap.bufs[i],hbuf:snap.hbufs?.[i]??null}));
     layersRef.current=restored;
     activeLayerIdxRef.current=snap.activeIdx;
     pixelBufRef.current=restored[snap.activeIdx]?.buf??null;
@@ -1220,6 +1419,7 @@ export default function App() {
       // Clear upper layer to transparent
       buf.fill(0);
     }
+    const cl=layersRef.current[activeLayerIdxRef.current];if(cl)cl.hbuf=null;
     setClearConfirm(false);isDirtyRef.current=true;
     dirtyRef.current={x1:0,y1:0,x2:canvas.width,y2:canvas.height};
     scheduleFlush();
@@ -1238,7 +1438,7 @@ export default function App() {
       ctx.setTransform(ratio,0,0,ratio,0,0);
       // Load into background layer only
       const bg=layersRef.current[0];
-      if(bg?.buf){bg.buf.set(d.data);}
+      if(bg?.buf){bg.buf.set(d.data);bg.hbuf=null;}
       else{const newBuf=new Uint8ClampedArray(d.data);const newBg:Layer={id:crypto.randomUUID(),name:'Background',opacity:100,visible:true,locked:false,blendMode:'normal',buf:newBuf};layersRef.current=[newBg];_setLayersUI([newBg]);_setActiveIdxUI(0);pixelBufRef.current=newBuf;}
       if(activeLayerIdxRef.current===0)pixelBufRef.current=layersRef.current[0].buf;
       dirtyRef.current={x1:0,y1:0,x2:canvas.width,y2:canvas.height};
@@ -1283,6 +1483,8 @@ export default function App() {
     const c=canvasRef.current;if(!c) return;
     dirtyRef.current={x1:0,y1:0,x2:c.width,y2:c.height};scheduleFlush();
   },[scheduleFlush]);
+  // Impasto lighting is only drawn in the Paint workspace; relight when either changes
+  useEffect(()=>{impastoLightRef.current=impastoLight;try{localStorage.setItem('mepaint-impasto',impastoLight?'on':'off');}catch{}fullRepaint();},[impastoLight,workspace,fullRepaint]);
 
   const generateThumb=useCallback((layer:Layer):string=>{
     if(!layer.buf||!canvasRef.current) return '';
@@ -1357,7 +1559,7 @@ export default function App() {
     const l=layersRef.current[idx];if(!l) return;
     saveUndo();
     const newBuf=l.buf?new Uint8ClampedArray(l.buf):null;
-    const newL:Layer={...l,id:crypto.randomUUID(),name:l.name+' copy',buf:newBuf};
+    const newL:Layer={...l,id:crypto.randomUUID(),name:l.name+' copy',buf:newBuf,hbuf:l.hbuf?new Uint8ClampedArray(l.hbuf):null};
     const next=[...layersRef.current];next.splice(idx+1,0,newL);
     syncLayers(next,idx+1);fullRepaint();scheduleThumbUpdate();
   },[syncLayers,fullRepaint,saveUndo,scheduleThumbUpdate]);
@@ -1377,6 +1579,10 @@ export default function App() {
       lower.buf[i*4+2]=(lower.buf[i*4+2]*(1-pa)+upper.buf[i*4+2]*pa)|0;
       lower.buf[i*4+3]=Math.min(255,(lower.buf[i*4+3])+(upper.buf[i*4+3]*ua))|0;
     }
+    if(upper.hbuf){
+      if(!lower.hbuf)lower.hbuf=new Uint8ClampedArray(W*H);
+      for(let i=0;i<W*H;i++)if(upper.hbuf[i])lower.hbuf[i]=Math.min(255,lower.hbuf[i]+upper.hbuf[i]*ua);
+    }
     const next=ls.filter((_,i)=>i!==idx);
     syncLayers(next,idx-1);fullRepaint();scheduleThumbUpdate();
   },[syncLayers,fullRepaint,saveUndo,scheduleThumbUpdate]);
@@ -1384,12 +1590,14 @@ export default function App() {
   const flattenAll=useCallback(()=>{
     if(!canvasRef.current||layersRef.current.length<=1) return;
     saveUndo();
-    const c=canvasRef.current;
-    const composited=c.getContext('2d')!.getImageData(0,0,c.width,c.height);
-    const newBuf=new Uint8ClampedArray(composited.data);
-    const bg:Layer={id:crypto.randomUUID(),name:'Background',opacity:100,visible:true,locked:false,blendMode:'normal',buf:newBuf};
-    syncLayers([bg],0);
-  },[syncLayers,saveUndo]);
+    const c=canvasRef.current,W=c.width,H=c.height;
+    const newBuf=compositeRect(0,0,W,H,false);
+    // Sum the visible layers' paint heights so impasto survives flattening
+    let hbuf:Uint8ClampedArray|null=null;
+    for(const l of layersRef.current){if(!l.visible||!l.hbuf) continue;if(!hbuf)hbuf=new Uint8ClampedArray(W*H);for(let i=0;i<W*H;i++)if(l.hbuf[i])hbuf[i]=Math.min(255,hbuf[i]+l.hbuf[i]);}
+    const bg:Layer={id:crypto.randomUUID(),name:'Background',opacity:100,visible:true,locked:false,blendMode:'normal',buf:newBuf,hbuf};
+    syncLayers([bg],0);fullRepaint();
+  },[syncLayers,saveUndo,compositeRect,fullRepaint]);
 
   const updateLayerProp=useCallback((idx:number,patch:Partial<Omit<Layer,'buf'>>)=>{
     const next=layersRef.current.map((l,i)=>i===idx?{...l,...patch}:l);
@@ -1485,8 +1693,7 @@ export default function App() {
     const px=Math.max(0,Math.round(nrx*ratio)),py=Math.max(0,Math.round(nry*ratio));
     const pw=Math.min(Math.round(nrw*ratio),c.width-px),ph=Math.min(Math.round(nrh*ratio),c.height-py);
     if(pw<1||ph<1) return;
-    const ctx=c.getContext('2d')!;
-    const cap=ctx.getImageData(px,py,pw,ph);
+    const cap=layerRegion(layersRef.current[activeLayerIdxRef.current],px,py,pw,ph,c.width);
     txCapRef.current=cap;
     const normalRect={x:nrx,y:nry,w:nrw,h:nrh};
     txOrigRef.current=normalRect;
@@ -1594,8 +1801,7 @@ export default function App() {
     mCtx.closePath();mCtx.fillStyle='white';mCtx.fill();
     const maskData=mCtx.getImageData(0,0,pw,ph);
     // Capture full bbox pixels (for cancel restore)
-    const ctx=c.getContext('2d')!;
-    const fullBbox=ctx.getImageData(px,py,pw,ph);
+    const fullBbox=layerRegion(layersRef.current[activeLayerIdxRef.current],px,py,pw,ph,c.width);
     txOrigFullRef.current=fullBbox;
     // Build masked ImageData (transparent outside lasso)
     const masked=new ImageData(pw,ph);
@@ -1678,7 +1884,8 @@ export default function App() {
     if(channelRef.current){channelReady.current=false;await channelRef.current.unsubscribe();channelRef.current=null;}
     if(!asHost){try{const res=await fetch(`${SERVER}/rooms/${rid}/canvas`,{headers:{'Authorization':`Bearer ${publicAnonKey}`}});if(res.ok){const{dataUrl}=await res.json();if(dataUrl)setTimeout(()=>loadCanvasFromUrl(dataUrl),200);}}catch(e){console.log('Canvas fetch:',e);}}
     const ch=supabase.channel(`mepaint:${rid}`,{config:{broadcast:{self:false},presence:{key:myUid.current}}});
-    ch.on('broadcast',{event:'stroke'},({payload}:{payload:StrokeMsg})=>{interpolateRef.current(payload.x1,payload.y1,payload.x2,payload.y2,{brushType:payload.bt,brushSize:payload.bs,color:payload.col,opacity:payload.op,eraser:!!payload.er,layerIdx:payload.li},false);});
+    ch.on('broadcast',{event:'stroke'},({payload}:{payload:StrokeMsg})=>{if(payload.x1===payload.x2&&payload.y1===payload.y2)remoteSmudge.current.delete(payload.uid);interpolateRef.current(payload.x1,payload.y1,payload.x2,payload.y2,{brushType:payload.bt,brushSize:payload.bs,color:payload.col,opacity:payload.op,eraser:!!payload.er,layerIdx:payload.li,fx:payload.fx,sm:payload.sm,sym:payload.sy},false,payload.uid);});
+    ch.on('broadcast',{event:'mp'},({payload}:{payload:MpMsg})=>{mpRemoteRef.current(payload);});
     ch.on('broadcast',{event:'cursor'},({payload}:{payload:CursorMsg})=>{setRemoteCursors(prev=>{const next=new Map(prev);const ex=next.get(payload.uid)??{x:0,y:0,color:collabColor(payload.uid),name:'Artist'};next.set(payload.uid,{...ex,x:payload.x,y:payload.y,name:payload.name??ex.name,color:payload.color??ex.color});return next;});});
     ch.on('broadcast',{event:'chat'},({payload}:{payload:ChatMsg})=>{setChatMessages(prev=>[...prev,payload]);});
     ch.on('presence',{event:'sync'},()=>{const state=ch.presenceState<{name:string;color:string}>();setOnlineUsers(Object.entries(state).map(([uid,pa])=>({uid,name:(pa[0] as any)?.name??'Artist',color:(pa[0] as any)?.color??collabColor(uid)})));});
@@ -1691,7 +1898,7 @@ export default function App() {
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:'smooth'});},[chatMessages]);
   const createRoom=useCallback(()=>{const rid=crypto.randomUUID().slice(0,8);isHost.current=true;setRoomId(rid);const url=new URL(window.location.href);url.searchParams.set('room',rid);window.history.pushState({},'',url.toString());},[]);
   const leaveRoom=useCallback(async()=>{const rid=roomId;if(isHost.current&&rid){isDirtyRef.current=true;await saveCanvasToServer(rid).catch(()=>{});}channelReady.current=false;if(channelRef.current){channelRef.current.unsubscribe();channelRef.current=null;}if(autoSaveTimer.current){clearInterval(autoSaveTimer.current);autoSaveTimer.current=null;}setRoomId(null);setIsConnected(false);setRemoteCursors(new Map());setOnlineUsers([]);setChatMessages([]);isHost.current=false;const url=new URL(window.location.href);url.searchParams.delete('room');window.history.pushState({},'',url.toString());},[roomId,saveCanvasToServer]);
-  const broadcastStroke=useCallback((x1:number,y1:number,x2:number,y2:number,settings:StampSettings)=>{if(!channelReady.current||!channelRef.current||workspaceRef.current==='animate') return;channelRef.current.send({type:'broadcast',event:'stroke',payload:{uid:myUid.current,x1,y1,x2,y2,bt:settings.brushType,bs:settings.brushSize,col:settings.color,op:settings.opacity,er:eraserModeRef.current||settings.brushType==='eraser',li:activeLayerIdxRef.current}});},[]);
+  const broadcastStroke=useCallback((x1:number,y1:number,x2:number,y2:number,settings:StampSettings)=>{if(!channelReady.current||!channelRef.current||workspaceRef.current==='animate') return;channelRef.current.send({type:'broadcast',event:'stroke',payload:{uid:myUid.current,x1,y1,x2,y2,bt:settings.brushType,bs:settings.brushSize,col:settings.color,op:settings.opacity,er:eraserModeRef.current||settings.brushType==='eraser',li:activeLayerIdxRef.current,fx:fxFor(settings.brushType),sm:smudgeModeRef.current?smudgeCfgRef.current:undefined,sy:symmetryRef.current}});},[fxFor]);
   const sendChat=useCallback(()=>{const text=chatInput.trim();if(!text||!channelReady.current||!channelRef.current) return;const msg:ChatMsg={uid:myUid.current,name:myName.current,color:myColor.current,text,ts:Date.now()};channelRef.current.send({type:'broadcast',event:'chat',payload:msg});setChatMessages(prev=>[...prev,msg]);setChatInput('');},[chatInput]);
   const copyLink=useCallback(()=>{
     const url=new URL(window.location.href);
@@ -1710,6 +1917,112 @@ export default function App() {
   useEffect(()=>{interpolateRef.current=interpolate;},[interpolate]);
   useEffect(()=>{broadcastStrokeRef.current=broadcastStroke;},[broadcastStroke]);
   useEffect(()=>{toolStateRef.current={brushType,brushSize,color,opacity};},[brushType,brushSize,color,opacity]);
+
+  // ── MyPaint strokes ────────────────────────────────────────────────────────
+  const mpSurfaceFor=useCallback((li:number,flow:number,sym:Symmetry)=>{
+    const c=canvasRef.current,L=layersRef.current[li];
+    if(!c||!L||L.locked||!L.buf) return null;
+    return new LayerSurface({buf:L.buf,W:c.width,H:c.height,mask:lassoMaskRef.current,flow,symmetry:sym,wrap:wrapRef.current,
+      onDirty:(x1,y1,x2,y2)=>{const d=dirtyRef.current;d.x1=Math.min(d.x1,x1);d.y1=Math.min(d.y1,y1);d.x2=Math.max(d.x2,x2);d.y2=Math.max(d.y2,y2);isDirtyRef.current=true;scheduleFlush();}});
+  },[scheduleFlush]);
+  // mepaint's size slider drives the brush radius; colour and eraser mode are applied per stroke
+  const mpConfigure=(b:MyPaintBrush,col:[number,number,number],size:number,eraser:number)=>{
+    setBrushColor(b,col);
+    b.setBase('radius_logarithmic',Math.log(Math.max(.5,size*(window.devicePixelRatio||1)/2)));
+    b.setBase('eraser',eraser);
+  };
+  const broadcastMp=useCallback((m:Omit<MpMsg,'uid'|'b'>)=>{
+    if(!channelReady.current||!channelRef.current||workspaceRef.current==='animate'||!mpRef.current) return;
+    channelRef.current.send({type:'broadcast',event:'mp',payload:{uid:myUid.current,b:mpRef.current.entry.id,...m}});
+  },[]);
+  const mpPressure=(e:PointerEvent)=>e.pointerType==='mouse'?1:lutRef.current[Math.round(Math.max(0,Math.min(1,ds.current.pressure))*255)];
+  const mpBegin=useCallback((x:number,y:number,e:PointerEvent)=>{
+    const mp=mpRef.current!,ts=toolStateRef.current,ratio=window.devicePixelRatio||1,d=ds.current;
+    const surf=mpSurfaceFor(activeLayerIdxRef.current,ts.opacity/100,symmetryRef.current);
+    d.mpSurf=surf;if(!surf) return;
+    const er=eraserModeRef.current?1:mp.eraser;
+    mpConfigure(mp.brush,ts.color,ts.brushSize,er);
+    const zoom=vpRef.current.zoom,rot=rotRef.current*Math.PI/180;
+    // A long dtime makes libmypaint reset cleanly at the pen-down point
+    mp.brush.reset();mp.brush.newStroke();
+    mp.brush.strokeTo(surf,x*ratio,y*ratio,0,0,0,10,zoom,rot);
+    const p=mpPressure(e),tx=(e.tiltX||0)/60,ty=(e.tiltY||0)/60;
+    mp.brush.strokeTo(surf,x*ratio,y*ratio,p,tx,ty,.001,zoom,rot);
+    d.mpT=e.timeStamp;d.mpP=p;
+    broadcastMp({x,y,p,tx,ty,dt:.001,s:1,c:ts.color,r:ts.brushSize,f:ts.opacity,er,li:activeLayerIdxRef.current,sy:symmetryRef.current});
+  },[mpSurfaceFor,broadcastMp]);
+  const mpMove=useCallback((x:number,y:number,e:PointerEvent)=>{
+    const mp=mpRef.current,d=ds.current;if(!mp||!d.mpSurf) return;
+    const ratio=window.devicePixelRatio||1,dt=Math.max(.001,(e.timeStamp-d.mpT)/1000);
+    d.mpT=e.timeStamp;
+    const p=mpPressure(e),tx=(e.tiltX||0)/60,ty=(e.tiltY||0)/60;d.mpP=p;
+    mp.brush.strokeTo(d.mpSurf,x*ratio,y*ratio,p,tx,ty,dt,vpRef.current.zoom,rotRef.current*Math.PI/180);
+    broadcastMp({x,y,p,tx,ty,dt});
+  },[broadcastMp]);
+  const mpEnd=useCallback(()=>{
+    const mp=mpRef.current,d=ds.current;if(!mp||!d.mpSurf){d.mpSurf=null;return;}
+    const ratio=window.devicePixelRatio||1,zoom=vpRef.current.zoom,rot=rotRef.current*Math.PI/180;
+    // Stabilizer finish line, then lift the pen
+    if(stabilizerRef.current>0)mp.brush.strokeTo(d.mpSurf,d.rawX*ratio,d.rawY*ratio,d.mpP,0,0,.008,zoom,rot);
+    mp.brush.strokeTo(d.mpSurf,d.rawX*ratio,d.rawY*ratio,0,0,0,.008,zoom,rot);
+    broadcastMp({x:d.rawX,y:d.rawY,p:0,tx:0,ty:0,dt:.008,e:1});
+    d.mpSurf=null;
+  },[broadcastMp]);
+  const mpMoveRef=useRef(mpMove);useEffect(()=>{mpMoveRef.current=mpMove;},[mpMove]);
+  const mpEndRef=useRef(mpEnd);useEffect(()=>{mpEndRef.current=mpEnd;},[mpEnd]);
+  // Collaborators' MyPaint strokes: one engine per person; events wait while their brush file loads
+  const mpRemote=useRef(new Map<string,{id:string;brush:MyPaintBrush|null;queue:MpMsg[];surf:LayerSurface|null}>());
+  const mpRemoteHandle=useCallback((m:MpMsg)=>{
+    const map=mpRemote.current;
+    let st=map.get(m.uid);
+    const apply=(msg:MpMsg)=>{
+      const b=st!.brush!,ratio=window.devicePixelRatio||1;
+      if(msg.s){
+        st!.surf=mpSurfaceFor(msg.li??0,(msg.f??100)/100,msg.sy??'none');
+        if(!st!.surf) return;
+        mpConfigure(b,msg.c??[0,0,0],msg.r??20,msg.er??0);
+        b.reset();b.newStroke();b.strokeTo(st!.surf,msg.x*ratio,msg.y*ratio,0,0,0,10,1,0);
+      }
+      if(!st!.surf) return;
+      b.strokeTo(st!.surf,msg.x*ratio,msg.y*ratio,msg.p,msg.tx,msg.ty,msg.dt,1,0);
+      if(msg.e)st!.surf=null;
+    };
+    if(!st||st.id!==m.b){
+      const fresh={id:m.b,brush:null as MyPaintBrush|null,queue:[] as MpMsg[],surf:null as LayerSurface|null};
+      st=fresh;map.set(m.uid,fresh);
+      loadBrush(m.b).then(b=>{fresh.brush=b;const q=fresh.queue;fresh.queue=[];q.forEach(apply);}).catch(()=>map.delete(m.uid));
+    }
+    if(!st.brush){st.queue.push(m);return;}
+    apply(m);
+  },[mpSurfaceFor]);
+  const mpRemoteRef=useRef(mpRemoteHandle);useEffect(()=>{mpRemoteRef.current=mpRemoteHandle;},[mpRemoteHandle]);
+
+  // ── Choosing a MyPaint brush: its own default size becomes the size slider value
+  const selectMyPaint=useCallback(async(entry:MpEntry)=>{
+    try{
+      const b=await loadBrush(entry.id);
+      mpRef.current={entry,brush:b,eraser:b.getBase('eraser')};setMpActive(entry);
+      setSelectedCustomRaw(null);setEraserMode(false);setSmudgeMode(false);setIsEyedropper(false);
+      setBrushSize(Math.max(2,Math.min(150,Math.round(2*Math.exp(b.getBase('radius_logarithmic'))/(window.devicePixelRatio||1)))));
+      setShowBrushLib(false);
+    }catch(err){toast.error('Could not load that brush',{description:String(err)});}
+  },[]);
+  // Lazily render stroke previews the first time the MyPaint tab is opened
+  useEffect(()=>{
+    if(!showBrushLib||brushLibTab!=='mypaint') return;
+    let cancelled=false;
+    loadIndex().then(async list=>{
+      if(cancelled) return;
+      setMpIndex(list);
+      for(const e of list){
+        if(cancelled) return;
+        if(mpPreviewDone.current.has(e.id)) continue;
+        try{const url=renderPreview(await loadBrush(e.id),[34,32,30]);mpPreviewDone.current.add(e.id);setMpPreviews(p=>({...p,[e.id]:url}));}catch{/* skip broken preview */}
+        await new Promise(r=>setTimeout(r,0));
+      }
+    }).catch(err=>setMpErr(String(err)));
+    return()=>{cancelled=true;};
+  },[showBrushLib,brushLibTab]);
 
   // ── Pointer events — registered ONCE (empty deps) so pointerup is never missed mid-stroke.
   // All tool state is read through refs that are always current.
@@ -1735,7 +2048,8 @@ export default function App() {
       // ── Transform drag handling
       if(isTransformRef.current&&txDsRef.current.active){
         const tx=txDsRef.current;const vp=vpRef.current;
-        const cdx=(e.clientX-tx.startCX)/vp.zoom,cdy=(e.clientY-tx.startCY)/vp.zoom;
+        const th=rotRef.current*Math.PI/180,rc=Math.cos(th),rs=Math.sin(th),sdx=e.clientX-tx.startCX,sdy=e.clientY-tx.startCY;
+        const cdx=(sdx*rc+sdy*rs)/vp.zoom,cdy=(-sdx*rs+sdy*rc)/vp.zoom;
         const sr=tx.startRect;
         if(tx.type==='selecting'){
           const{x,y}=toCanvasRef.current(e.clientX,e.clientY);
@@ -1755,6 +2069,7 @@ export default function App() {
         return;
       }
       const d=ds.current;
+      if(d.isRotating){const a=Math.atan2(e.clientY-d.rotCy,e.clientX-d.rotCx);setRotation(normAngle(Math.round(d.rotStart+(a-d.rotStartAng)*180/Math.PI)));return;}
       if(d.isPanning){const dx=e.clientX-d.panStartX,dy=e.clientY-d.panStartY;setPan({x:d.panStartPX+dx,y:d.panStartPY+dy});return;}
       // Only process this move event if it belongs to the active drawing pointer.
       // This prevents a secondary hover/mouse-emulation pointer from painting.
@@ -1766,13 +2081,32 @@ export default function App() {
         d.pressure=d.pressure*0.5+rawP*0.5;
         const ts=toolStateRef.current;
         let{x,y}=toCanvasRef.current(e.clientX,e.clientY);
+        // Speed dynamics: smoothed canvas px per ms
+        const dt=Math.max(1,e.timeStamp-d.lastT);
+        d.speed=d.speed*.7+Math.hypot(x-d.rawX,y-d.rawY)/dt*.3;d.lastT=e.timeStamp;
+        // Perspective assistant: once the stroke shows a direction, lock it to the closest guide line
+        const as=assistRef.current;
+        if(as.on&&as.snap){
+          if(!d.snapDir){
+            const mvx=x-d.strokeX,mvy=y-d.strokeY,ml=Math.hypot(mvx,mvy);
+            if(ml>6){
+              const dirs:Pt[]=[];
+              for(const vp of as.mode==='2pt'?[as.vp1,as.vp2]:[as.vp1]){const vx=d.strokeX-vp.x,vy=d.strokeY-vp.y,vl=Math.hypot(vx,vy);if(vl>1)dirs.push({x:vx/vl,y:vy/vl});}
+              if(as.mode==='2pt')dirs.push({x:0,y:1});
+              let best=dirs[0],bd=-1;
+              for(const dr of dirs){const dot=Math.abs((mvx*dr.x+mvy*dr.y)/ml);if(dot>bd){bd=dot;best=dr;}}
+              if(best)d.snapDir={ox:d.strokeX,oy:d.strokeY,dx:best.x,dy:best.y};
+            } else {x=d.strokeX;y=d.strokeY;}
+          }
+          if(d.snapDir){const sd=d.snapDir,t=(x-sd.ox)*sd.dx+(y-sd.oy)*sd.dy;x=sd.ox+sd.dx*t;y=sd.oy+sd.dy*t;}
+        }
         d.rawX=x;d.rawY=y;
         // Stabilizer: the brush trails the pointer with an exponential ease, ironing out hand jitter
         const st=stabilizerRef.current;
         if(st>0){const a=1-st/100*.92;d.sx+=(x-d.sx)*a;d.sy+=(y-d.sy)*a;x=d.sx;y=d.sy;}
         const settings:StampSettings={brushType:ts.brushType,brushSize:ts.brushSize,color:ts.color,opacity:ts.opacity};
-        interpolateRef.current(d.lastX,d.lastY,x,y,settings);
-        broadcastStrokeRef.current(d.lastX,d.lastY,x,y,settings);
+        if(d.mpSurf)mpMoveRef.current(x,y,e);
+        else{interpolateRef.current(d.lastX,d.lastY,x,y,settings);broadcastStrokeRef.current(d.lastX,d.lastY,x,y,settings);}
         d.lastX=x;d.lastY=y;
       }
       const{x,y}=toCanvasRef.current(e.clientX,e.clientY);const now=Date.now();
@@ -1793,13 +2127,14 @@ export default function App() {
       }
       // Stabilizer "finish line": close the gap between the lagging brush and where the pen lifted
       const d=ds.current;
-      if(d.isDrawing&&stabilizerRef.current>0&&Math.hypot(d.rawX-d.lastX,d.rawY-d.lastY)>.5){
+      if(d.isDrawing&&d.mpSurf)mpEndRef.current();
+      else if(d.isDrawing&&stabilizerRef.current>0&&Math.hypot(d.rawX-d.lastX,d.rawY-d.lastY)>.5){
         const ts=toolStateRef.current;
         const settings:StampSettings={brushType:ts.brushType,brushSize:ts.brushSize,color:ts.color,opacity:ts.opacity};
         interpolateRef.current(d.lastX,d.lastY,d.rawX,d.rawY,settings);
         broadcastStrokeRef.current(d.lastX,d.lastY,d.rawX,d.rawY,settings);
       }
-      ds.current.isDrawing=false;ds.current.smudgeColor=null;ds.current.isPanning=false;ds.current.pressure=1.0;refResizeRef.current=null;
+      ds.current.isDrawing=false;ds.current.isPanning=false;ds.current.isRotating=false;ds.current.pressure=1.0;refResizeRef.current=null;
     };
     const onKey=(e:KeyboardEvent)=>{const tg=(e.target as HTMLElement).tagName;if(tg==='INPUT'||tg==='TEXTAREA') return;if(e.code==='Space'&&!ds.current.isSpaceHeld){ds.current.isSpaceHeld=true;const cd=cursorDivRef.current;if(cd)cd.style.opacity='0';}};
     const onKeyUp=(e:KeyboardEvent)=>{if(e.code==='Space'){ds.current.isSpaceHeld=false;const cd=cursorDivRef.current;if(cd)cd.style.opacity='1';}};
@@ -1828,16 +2163,18 @@ export default function App() {
         case '4':setBrushType('watercolor');break;case '5':setBrushType('thick-paint');break;case '6':case 'e':setEraserMode(p=>!p);break;
         case 's':setSmudgeMode(p=>!p);break;case '[':setBrushSize(p=>Math.max(2,p-5));break;case ']':setBrushSize(p=>Math.min(150,p+5));break;
         case 'f':case 'F':setFlipH(p=>!p);break;case 'V':setFlipV(p=>!p);break;
-        case 'g':case 'G':setShowGallery(p=>!p);break;case 'c':setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);break;case '?':setShowHelp(p=>!p);break;
-        case 'Escape':setPopPal(null);setShowHelp(false);setIsEyedropper(false);setShowGallery(false);setShowBrushAdv(false);setShowSurface(false);setShowProfile(false);setShowCanvasSize(false);setShowLayerPanel(false);setShowBrushLib(false);setShowInvite(false);setShowColorPanel(false);if(isTransformRef.current)cancelTransformRef.current();if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
+        case 'g':case 'G':setShowGallery(p=>!p);break;case 'p':case 'P':setShowMixer(p=>!p);break;case 'c':setShowColorPanel(p=>!p);setShowBrushAdv(false);setShowSurface(false);break;case '?':setShowHelp(p=>!p);break;
+        case 'Escape':setPopPal(null);setShowView(false);setShowHelp(false);setIsEyedropper(false);setShowGallery(false);setShowBrushAdv(false);setShowSurface(false);setShowProfile(false);setShowCanvasSize(false);setShowLayerPanel(false);setShowBrushLib(false);setShowInvite(false);setShowColorPanel(false);if(isTransformRef.current)cancelTransformRef.current();if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
         case 't':case 'T':if(!isTransformRef.current){if(isLassoRef.current){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;}else{cancelTransformRef.current();}break;
         case 'l':case 'L':if(!isLassoRef.current){if(isTransformRef.current)cancelTransformRef.current();setIsLassoMode(true);isLassoRef.current=true;setLassoPath([]);lassoPathRef.current=[];setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}else{setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}break;
         case '=':case '+':zoomAt(window.innerWidth/2,window.innerHeight/2,1.25);break;
         case '-':zoomAt(window.innerWidth/2,window.innerHeight/2,.8);break;case '0':fitCanvas();break;
+        case ',':setRotation(r=>normAngle(r-15));break;case '.':setRotation(r=>normAngle(r+15));break;case 'r':case 'R':setRotation(0);break;
+        case 'w':case 'W':setWrapMode(p=>!p);break;case 'a':case 'A':toggleAssist();break;
       }
     };
     document.addEventListener('keydown',onKey);return()=>document.removeEventListener('keydown',onKey);
-  },[handleUndo,handleRedo,handleSave,zoomAt,fitCanvas]);
+  },[handleUndo,handleRedo,handleSave,zoomAt,fitCanvas,toggleAssist]);
 
   const handleCanvasDown=useCallback((e:React.PointerEvent<HTMLCanvasElement>)=>{
     e.preventDefault();
@@ -1862,25 +2199,26 @@ export default function App() {
       lassoDrawRef.current=true;return;
     }
     if(isEyedropper||e.altKey){sampleColor(e.clientX,e.clientY);return;}
+    if(ds.current.isSpaceHeld&&e.shiftKey){const r=canvasRef.current!.getBoundingClientRect(),d=ds.current;d.isRotating=true;d.rotCx=r.left+r.width/2;d.rotCy=r.top+r.height/2;d.rotStartAng=Math.atan2(e.clientY-d.rotCy,e.clientX-d.rotCx);d.rotStart=rotRef.current;return;}
     if(ds.current.isSpaceHeld){ds.current.isPanning=true;ds.current.panStartX=e.clientX;ds.current.panStartY=e.clientY;ds.current.panStartPX=vpRef.current.panX;ds.current.panStartPY=vpRef.current.panY;return;}
     // Guard: if a stroke is already active (e.g. mouse-emulation pointerdown after pen pointerdown), ignore
     if(activePointerIdRef.current!==null) return;
     // Initialize pressure AFTER re-entry guard so mouse-emulation events can't corrupt the active stroke's pressure
     ds.current.pressure=e.pointerType==='mouse'?1.0:e.pressure>0?Math.max(0.01,e.pressure):1.0;
     const{x,y}=toCanvas(e.clientX,e.clientY);
-    if(smudgeMode&&pixelBufRef.current&&canvasRef.current){const ratio=window.devicePixelRatio||1,W=canvasRef.current.width;const px=Math.floor(x*ratio),py=Math.floor(y*ratio),i=(py*W+px)*4,b=pixelBufRef.current;ds.current.smudgeColor=[b[i],b[i+1],b[i+2]];}
     activePointerIdRef.current=e.pointerId;
-    ds.current.isDrawing=true;ds.current.lastX=x;ds.current.lastY=y;
-    ds.current.sx=ds.current.rawX=x;ds.current.sy=ds.current.rawY=y;saveUndo();
-    const adv=brushAdvancedRef.current[brushType];const pressure=ds.current.pressure;
-    const pc=Math.pow(Math.max(0,Math.min(1,pressure)),0.55);
-    const sJ=1+(Math.random()-.5)*(adv?.sizeJitter??0)*.02,oJ=1+(Math.random()-.5)*(adv?.opacityJitter??0)*.02;
-    const eff:StampSettings={brushType,brushSize:brushSize*(0.06+pc*0.94)*Math.max(.1,sJ),color,opacity:opacity*(0.04+pc*0.96)*Math.max(.05,oJ)};
-    stamp(x,y,eff,smudgeMode?ds.current.smudgeColor:undefined);
-    const canvas=canvasRef.current;if(canvas){const CW=canvas.offsetWidth,CH=canvas.offsetHeight;if(symmetry==='vertical'||symmetry==='both')stamp(CW-x,y,eff);if(symmetry==='horizontal'||symmetry==='both')stamp(x,CH-y,eff);if(symmetry==='both')stamp(CW-x,CH-y,eff);}
+    // Each stroke starts with clean wet paint, zero speed and no locked guide
+    const d=ds.current;
+    d.smudge=[];d.speed=0;d.lastT=e.timeStamp;d.strokeX=x;d.strokeY=y;d.snapDir=null;
+    d.isDrawing=true;d.lastX=x;d.lastY=y;
+    d.sx=d.rawX=x;d.sy=d.rawY=y;saveUndo();
+    // MyPaint brush (smudge mode S still uses mepaint's own wet smudge)
+    if(mpRef.current&&!smudgeMode){mpBegin(x,y,e.nativeEvent);return;}
+    const base:StampSettings={brushType,brushSize,color,opacity};
+    stampAll(x,y,dynamicsFor(base),smudgeMode?d.smudge:null);
     // Broadcast initial stamp so remote users see pen-down dots and first-point strokes
-    broadcastStrokeRef.current(x,y,x,y,eff);
-  },[isEyedropper,sampleColor,toCanvas,smudgeMode,brushType,brushSize,color,opacity,saveUndo,stamp,symmetry,animPlaying]);
+    broadcastStrokeRef.current(x,y,x,y,base);
+  },[isEyedropper,sampleColor,toCanvas,smudgeMode,brushType,brushSize,color,opacity,saveUndo,stampAll,dynamicsFor,animPlaying,mpBegin]);
 
   const cycleSymmetry=()=>{const o:Symmetry[]=['none','vertical','horizontal','both'];setSymmetry(s=>o[(o.indexOf(s)+1)%o.length]);};
   const ytCtrl=useCallback((cmd:string,args:unknown[]=[])=>{ytIframeRef.current?.contentWindow?.postMessage(JSON.stringify({event:'command',func:cmd,args}),'*');},[]);
@@ -1898,15 +2236,15 @@ export default function App() {
       keys:isMobile?undefined:['Scroll · zoom','Space · pan','Right-click · palette']},
     {target:['brushes','strokes'],placement:'top',title:'Brushes & strokes',
       body:isMobile?'Quick-pick a brush, then set its size. The menu holds 13 more brushes plus eraser & smudge.'
-        :'Five favourite brushes, plus eraser, smudge and brush dynamics. Size and Flow shape each dab; Smooth stabilises your line for clean inking.',
+        :'Five favourite brushes, plus eraser, wet smudge and brush settings (pressure curve, impasto, grain). The library adds 49 MyPaint brushes. Smooth stabilises your line for clean inking.',
       keys:isMobile?undefined:['1–5','E','S','[ ]']},
     {target:'color',placement:'top',title:'Mix your colours',
-      body:'Open the colour panel for a full picker, 14 classic pigments and your recent colours. Overlapping strokes blend like real paint.',
-      keys:isMobile?undefined:['C','Alt+E']},
+      body:'Open the colour panel for a picker or hue wheel with gamut masks, plus 14 classic pigments. Press P to mix paint on the palette first.',
+      keys:isMobile?undefined:['C','P','Alt+E']},
     ...(isMobile?[
       {target:'menu',placement:'bottom' as const,title:'Everything else is in here',body:'Layers, transform & lasso, symmetry, paper textures, your gallery, live collaboration and more.'},
     ]:[
-      {target:'tools',placement:'right' as const,title:'Your toolbox',body:'Transform, lasso, brush library, eyedropper, symmetry, canvas size and paper texture. Hover any tool to see its shortcut.',keys:['T','L']},
+      {target:'tools',placement:'right' as const,title:'Your toolbox',body:'Transform, lasso, brush library, eyedropper, symmetry, canvas size and paper texture. The ruler button up top adds rotation, wrap-around and perspective guides.',keys:['T','L','A']},
       {target:'layers',placement:'right' as const,title:'Layers & blend modes',body:'Stack layers, set opacity and blend modes like Multiply or Overlay, and drop in photos as layers.'},
       {target:'collab',placement:'right' as const,title:'Paint together, live',body:'Open a shared room and send the link. Everyone paints on the same canvas in real time, with chat.'},
     ]),
@@ -2031,8 +2369,9 @@ export default function App() {
             {icon:<Users size={15} strokeWidth={2}/>,active:showInvite,cb:()=>setShowInvite(p=>!p),hide:workspace==='animate',badge:isConnected,tip:'Collaborate'},
             {icon:<Music2 size={15} strokeWidth={2}/>,active:showMusic,cb:()=>setShowMusic(p=>!p),tip:'Music'},
             {icon:<ImageIcon size={15} strokeWidth={2}/>,active:showRef,cb:()=>setShowRef(p=>!p),tip:'Reference'},
+            {icon:<Palette size={15} strokeWidth={2}/>,active:showMixer,cb:()=>setShowMixer(p=>!p),tip:'Mixing palette',kbd:'P'},
           ].filter((x:any)=>!x.hide).map((item:any)=>(
-            <Tip key={item.tip} label={item.badge?`${item.tip} · live`:item.tip}>
+            <Tip key={item.tip} label={item.badge?`${item.tip} · live`:item.tip} kbd={item.kbd}>
               <button onClick={item.cb} className="sbtn" style={{...sidebtn(item.active)}} aria-label={item.tip} data-tour={item.tip==='Collaborate'?'collab':undefined}>
                 {item.icon}
                 {item.badge&&<span style={{position:'absolute',top:4,right:4,width:6,height:6,borderRadius:'50%',background:LIME,border:`2px solid ${WHITE}`,animation:'pulse 2s ease infinite'}}/>}
@@ -2045,7 +2384,7 @@ export default function App() {
           <Tip label="Transform" kbd="T"><button data-tour="tools" className="sbtn" aria-label="Transform" onClick={()=>{if(isTransformMode){cancelTransform();}else{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];}setIsTransformMode(true);isTransformRef.current=true;setIsEyedropper(false);}}} style={{...sidebtn(isTransformMode)}}><Move size={15} strokeWidth={2}/></button></Tip>
           <Tip label="Lasso select" kbd="L"><button className="sbtn" aria-label="Lasso select" onClick={()=>{if(isLassoMode){setIsLassoMode(false);isLassoRef.current=false;setLassoPath([]);lassoPathRef.current=[];lassoDrawRef.current=false;lassoMaskRef.current=null;setLassoPhase('drawing');lassoPhaseRef.current='drawing';}else{if(isTransformMode)cancelTransform();setIsLassoMode(true);isLassoRef.current=true;setIsEyedropper(false);setLassoPhase('drawing');lassoPhaseRef.current='drawing';lassoMaskRef.current=null;}}} style={{...sidebtn(isLassoMode)}}><Lasso size={15} strokeWidth={2}/></button></Tip>
           <Tip label="Brush library"><button ref={brushLibBtnRef} className="sbtn" aria-label="Brush library" onClick={()=>{setShowBrushLib(p=>!p);setShowBrushAdv(false);setShowSurface(false);setShowColorPanel(false);}} style={{...sidebtn(showBrushLib)}}>
-            {selectedCustom?<Paintbrush2 size={15} strokeWidth={2}/>:<BrushIcon type={brushType} size={15}/>}
+            {selectedCustom||mpActive?<Paintbrush2 size={15} strokeWidth={2}/>:<BrushIcon type={brushType} size={15}/>}
           </button></Tip>
           <Tip label="Eyedropper" kbd="Alt+E"><button className="sbtn" aria-label="Eyedropper" onClick={()=>setIsEyedropper(p=>!p)} style={{...sidebtn(isEyedropper)}}><Pipette size={15} strokeWidth={2}/></button></Tip>
           <Tip label={`Symmetry · ${symmetry}`}><button className="sbtn" aria-label="Symmetry" onClick={cycleSymmetry} style={{...sidebtn(symmetry!=='none')}}>
@@ -2115,6 +2454,8 @@ export default function App() {
                 {(flipH||flipV)&&<span className="pill" style={{background:SAND,color:MUTED}}>{flipH&&flipV?'H+V FLIP':flipH?'H FLIP':'V FLIP'}</span>}
                 {symmetry!=='none'&&<span className="pill" style={{background:SAND,color:MUTED}}>{symmetry.toUpperCase()} SYM</span>}
                 {stabilizer>0&&<span className="pill" style={{background:SAND,color:MUTED}}>SMOOTH {stabilizer}</span>}
+                {wrapMode&&<span className="pill" style={{background:SAND,color:MUTED}}>WRAP</span>}
+                {assist.on&&<span className="pill" style={{background:SAND,color:MUTED}}>{assist.mode==='2pt'?'2-PT':'1-PT'} GUIDES{assist.snap?' · SNAP':''}</span>}
               </>
             )}
           </div>
@@ -2125,6 +2466,10 @@ export default function App() {
           {!isMobile&&<button onClick={()=>setShowCanvasSize(p=>!p)} style={{display:'flex',alignItems:'center',gap:5,background:SAND,border:`1px solid ${LINE_STRONG}`,borderRadius:7,padding:'4px 10px',cursor:'pointer',color:MUTED,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,letterSpacing:.5}}>
             <Maximize size={9} strokeWidth={2}/>{canvasW}×{canvasH}
           </button>}
+
+          {/* View & guides: rotation, wrap-around, perspective */}
+          {!isMobile&&<button ref={viewBtnRef} onClick={openView} title="View & guides" aria-label="View and guides" style={{width:28,height:28,border:BORDER,borderRadius:7,background:showView||rotation!==0||wrapMode||assist.on?LIME:SAND,color:showView||rotation!==0||wrapMode||assist.on?ACCENT_INK:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Ruler size={13} strokeWidth={2}/></button>}
+          {rotation!==0&&<button onClick={()=>setRotation(0)} title="Reset rotation [R]" className="pill" style={{background:SAND,color:MUTED,cursor:'pointer',gap:4}}><RotateCw size={10} strokeWidth={2.2}/>{rotation}°</button>}
 
           {/* Flip buttons */}
           {!isMobile&&[{icon:<FlipHIcon size={12}/>,active:flipH,cb:()=>setFlipH(p=>!p),tip:'Flip H [F]'},{icon:<FlipVIcon size={12}/>,active:flipV,cb:()=>setFlipV(p=>!p),tip:'Flip V [V]'}].map((b,i)=>(
@@ -2241,10 +2586,19 @@ export default function App() {
           cursor:(isLassoMode&&lassoPhase==='drawing')?`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cellipse cx='13' cy='10' rx='9' ry='7' fill='none' stroke='%230D0B07' stroke-width='2.2'/%3E%3Cpath d='M20 15 L20 24 M17.5 21.5 L20 24 L22.5 21.5' fill='none' stroke='%230D0B07' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 13 10, crosshair`:(isTransformMode&&txPhase==='select')?`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22'%3E%3Crect x='1' y='1' width='20' height='20' rx='1.5' fill='none' stroke='%230D0B07' stroke-width='1.5' stroke-dasharray='3.5 2'/%3E%3Cline x1='11' y1='3' x2='11' y2='19' stroke='%230D0B07' stroke-width='1.2'/%3E%3Cline x1='3' y1='11' x2='19' y2='11' stroke='%230D0B07' stroke-width='1.2'/%3E%3C/svg%3E") 11 11, crosshair`:isEyedropper?'crosshair':spaceHeld?'grab':'default'}}>
 
           {/* Pan/zoom wrapper — the canvas panel floats directly inside the workspace */}
-          <div style={{position:'absolute',top:0,left:0,transformOrigin:'0 0',transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,willChange:'transform'}}>
+          <div style={{position:'absolute',top:0,left:0,transformOrigin:'0 0',transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom}) translate(${rotPivot.x}px,${rotPivot.y}px) rotate(${rotation}deg) translate(${-rotPivot.x}px,${-rotPivot.y}px)`,willChange:'transform'}}>
+
+            {/* Wrap-around: 8 live copies so seams can be painted across */}
+            {wrapMode&&wrapTile&&canvasW>0&&[-1,0,1].flatMap(j=>[-1,0,1].map(i=>(i===0&&j===0)?null:(
+              <img key={`${i},${j}`} src={wrapTile} alt="" draggable={false}
+                onPointerDown={e=>handleCanvasDown(e as unknown as React.PointerEvent<HTMLCanvasElement>)}
+                onPointerEnter={()=>{setIsOverCanvas(true);const cd=cursorDivRef.current;if(cd)cd.style.opacity='1';}}
+                onPointerLeave={()=>{setIsOverCanvas(false);const cd=cursorDivRef.current;if(cd)cd.style.opacity='0';}}
+                style={{position:'absolute',left:i*canvasW,top:barH+j*canvasH,width:canvasW,height:canvasH,transform:`scaleX(${flipH?-1:1}) scaleY(${flipV?-1:1})`,opacity:.92,userSelect:'none',touchAction:'none',cursor:'none'}}/>
+            )))}
 
             {/* Single floating canvas panel: drag handle + drawing canvas, tightly fitted */}
-            <div data-tour="canvas" style={{display:'inline-flex',flexDirection:'column',borderRadius:12,overflow:'hidden',verticalAlign:'top',boxShadow:'var(--mp-canvas-shadow)',outline:`1px solid ${LINE}`}}>
+            <div data-tour="canvas" style={{position:'relative',zIndex:1,display:'inline-flex',flexDirection:'column',borderRadius:12,overflow:'hidden',verticalAlign:'top',boxShadow:'var(--mp-canvas-shadow)',outline:`1px solid ${LINE}`}}>
 
               {/* Drag handle — grab here to reposition canvas */}
               <div onMouseDown={startCanvasDrag} style={{height:isMobile?20:24,background:WHITE,display:'flex',alignItems:'center',padding:'0 8px',cursor:'move',flexShrink:0,gap:6,userSelect:'none',borderBottom:BORDER}}>
@@ -2345,10 +2699,34 @@ export default function App() {
               </div>
 
             </div>
+
+            {/* Perspective guides: rays from each vanishing point, clipped to the canvas; handles stay draggable outside it */}
+            {assist.on&&canvasW>0&&(()=>{
+              const vps=assist.mode==='2pt'?[assist.vp1,assist.vp2]:[assist.vp1];
+              const L=Math.max(canvasW,canvasH)*4,hs=14/zoom;
+              return(
+                <div style={{position:'absolute',left:0,top:barH,width:canvasW,height:canvasH,transform:`scaleX(${flipH?-1:1}) scaleY(${flipV?-1:1})`,pointerEvents:'none',zIndex:25}}>
+                  <svg width={canvasW} height={canvasH} style={{position:'absolute',inset:0,overflow:'visible'}}>
+                    <defs><clipPath id="assist-clip"><rect width={canvasW} height={canvasH}/></clipPath></defs>
+                    <g clipPath="url(#assist-clip)">
+                      {vps.map((vp,vi)=>Array.from({length:36},(_,k)=>{const a=k*Math.PI/18;return<line key={`${vi}-${k}`} x1={vp.x} y1={vp.y} x2={vp.x+Math.cos(a)*L} y2={vp.y+Math.sin(a)*L} stroke="var(--mp-accent)" strokeOpacity={.3} strokeWidth={1} vectorEffect="non-scaling-stroke"/>;}))}
+                      {assist.mode==='2pt'&&(()=>{const dx=assist.vp2.x-assist.vp1.x,dy=assist.vp2.y-assist.vp1.y,l=Math.hypot(dx,dy)||1;return<line x1={assist.vp1.x-dx/l*L} y1={assist.vp1.y-dy/l*L} x2={assist.vp2.x+dx/l*L} y2={assist.vp2.y+dy/l*L} stroke="var(--mp-accent)" strokeOpacity={.75} strokeWidth={1.5} vectorEffect="non-scaling-stroke"/>;})()}
+                    </g>
+                  </svg>
+                  {vps.map((vp,vi)=>(
+                    <div key={vi} title="Drag to move the vanishing point"
+                      onPointerDown={e=>{e.stopPropagation();e.preventDefault();(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);vpDragRef.current=vi;}}
+                      onPointerMove={e=>{if(vpDragRef.current!==vi) return;const pt=toCanvas(e.clientX,e.clientY);setAssist(vi?{vp2:pt}:{vp1:pt});}}
+                      onPointerUp={()=>{vpDragRef.current=null;}}
+                      style={{position:'absolute',left:vp.x-hs/2,top:vp.y-hs/2,width:hs,height:hs,borderRadius:'50%',background:'#fff',border:`${2/zoom}px solid var(--mp-accent)`,boxShadow:`0 0 0 ${3/zoom}px color-mix(in srgb,var(--mp-accent) 25%,transparent)`,pointerEvents:'auto',cursor:'move',touchAction:'none'}}/>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Remote cursors — positioned in workspace space */}
-          {Array.from(remoteCursors.entries()).map(([uid,cursor])=>{const sx=cursor.x*zoom+pan.x,sy=cursor.y*zoom+pan.y+24*zoom;if(sx<-20||sy<-20||sx>8000||sy>8000) return null;return(<div key={uid} style={{position:'absolute',left:sx,top:sy,transform:'translate(-2px,-2px)',pointerEvents:'none',zIndex:50}}><div style={{width:10,height:10,borderRadius:'50%',background:cursor.color,border:`1px solid ${LINE_STRONG}`}}/><div style={{position:'absolute',top:13,left:4,whiteSpace:'nowrap',background:cursor.color,color:'#fff',fontSize:9,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:700,padding:'2px 6px',borderRadius:4,border:BORDER}}>{cursor.name}</div></div>);})}
+          {Array.from(remoteCursors.entries()).map(([uid,cursor])=>{const{x:sx,y:sy}=canvasToWorkspace(cursor.x,cursor.y);if(sx<-20||sy<-20||sx>8000||sy>8000) return null;return(<div key={uid} style={{position:'absolute',left:sx,top:sy,transform:'translate(-2px,-2px)',pointerEvents:'none',zIndex:50}}><div style={{width:10,height:10,borderRadius:'50%',background:cursor.color,border:`1px solid ${LINE_STRONG}`}}/><div style={{position:'absolute',top:13,left:4,whiteSpace:'nowrap',background:cursor.color,color:'#fff',fontSize:9,fontFamily:"'Geist',system-ui,sans-serif",fontWeight:700,padding:'2px 6px',borderRadius:4,border:BORDER}}>{cursor.name}</div></div>);})}
 
         </div>{/* end workspace */}
 
@@ -2478,26 +2856,54 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ BRUSH ADV POPOVER ════════════════════════════════════════════════ */}
-        {showBrushAdv&&(()=>{const adv=brushAdvanced[brushType];return(
-          <div ref={brushAdvPopRef} style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,bottom:animBottom+10,width:isMobile?'auto':264,maxWidth:isMobile?'calc(100vw - 16px)':undefined,animation:'slu 180ms ease',zIndex:310}} className="pop">
-            <div style={{padding:'14px 16px'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,paddingBottom:12,borderBottom:BORDER}}>
-                <div style={{display:'flex',alignItems:'center',gap:7}}><Settings2 size={13} strokeWidth={2}/><span style={{fontWeight:700,fontSize:14}}>Brush Dynamics</span></div>
-                <button onClick={()=>setBrushAdvanced(p=>({...p,[brushType]:DEFAULT_ADV[brushType]}))} style={{...ibtn('default'),height:26,padding:'0 9px',fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",fontWeight:500,letterSpacing:.3}}>RESET</button>
-              </div>
-              {([{label:'Size Jitter',key:'sizeJitter',val:adv.sizeJitter,max:100,unit:'%'},{label:'Opacity Jitter',key:'opacityJitter',val:adv.opacityJitter,max:100,unit:'%'},{label:'Spacing',key:'spacingMult',val:Math.round(adv.spacingMult*100),max:300,unit:'%',scale:.01}] as {label:string;key:keyof BrushAdvanced;val:number;max:number;unit:string;scale?:number}[]).map(({label,key,val,max,unit,scale})=>(
-                <div key={key} style={{marginBottom:12}}>
-                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}><span style={{fontSize:12,fontWeight:600}}>{label}</span><span style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:10,color:ACCENT,fontWeight:500}}>{val}{unit}</span></div>
-                  <input type="range" min={0} max={max} value={val} style={{width:'100%',background:`linear-gradient(to right,${ACCENT} ${val/max*100}%,var(--mp-track) 0%)`}} onChange={e=>setBrushAdvanced(p=>({...p,[brushType]:{...p[brushType],[key]:scale?+e.target.value*scale:+e.target.value}}))}/>
-                </div>
-              ))}
-              <div style={{borderTop:BORDER,paddingTop:10,display:'flex',gap:3}}>
-                {BRUSH_DEFS.filter(b=>b.category==='Basic'&&b.type!=='eraser').map(b=>(<button key={b.type} onClick={()=>{setBrushType(b.type);setEraserMode(false);}} style={{flex:1,height:28,border:BORDER,borderRadius:7,background:brushType===b.type&&!eraserMode?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all 100ms'}}><BrushIcon type={b.type} size={13}/></button>))}
-              </div>
-            </div>
+        {/* ══ MIXING PALETTE ═════════════════════════════════════════════════ */}
+        {showMixer&&(
+          <div style={{position:'fixed',left:isMobile?8:mixerPos.x,top:isMobile?headerH+8:mixerPos.y,right:isMobile?8:undefined,width:isMobile?'auto':312,zIndex:221,animation:'slu 200ms ease'}}>
+            <MixingPalette color={color} pigments={PIGMENTS} onPick={applyColor} onClose={()=>setShowMixer(false)} onDragStart={e=>startDrag(e,mixerPos,setMixerPos)}/>
           </div>
-        );})()}
+        )}
+
+        {/* ══ BRUSH SETTINGS POPOVER ═══════════════════════════════════════════ */}
+        {showBrushAdv&&(
+          <div ref={brushAdvPopRef} className="pop sb" style={{position:'fixed',left:isMobile?8:62,right:isMobile?8:undefined,bottom:animBottom+10,width:isMobile?'auto':312,maxWidth:isMobile?'calc(100vw - 16px)':undefined,maxHeight:`calc(100vh - ${headerH+animBottom+24}px)`,overflowY:'auto',animation:'slu 180ms ease',zIndex:310}}>
+            <BrushSettings
+              brushLabel={activeBrushLabel}
+              adv={brushAdvanced[brushType]}
+              onAdv={patch=>setBrushAdvanced(p=>({...p,[brushType]:{...p[brushType],...(patch as Partial<BrushAdvanced>)}}))}
+              onResetAdv={()=>setBrushAdvanced(p=>({...p,[brushType]:DEFAULT_ADV[brushType]}))}
+              dynamics={dynamics} onDynamics={setDynamics}
+              smudge={smudgeCfg} onSmudge={setSmudgeCfg} smudgeOn={smudgeMode} onToggleSmudge={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}}
+              impastoLight={impastoLight} onImpastoLight={setImpastoLight}
+              tipOptions={(['bristle','sponge','chalk','charcoal','fan','watercolor','pencil'] as BrushType[]).map(t=>({id:t,label:BRUSH_DEFS.find(b=>b.type===t)!.label.split(' ')[0],icon:<BrushIcon type={t} size={14}/>}))}
+            />
+          </div>
+        )}
+
+        {/* ══ VIEW & GUIDES POPOVER ═══════════════════════════════════════════ */}
+        {showView&&(
+          <div ref={viewPopRef} className="pop" style={{position:'fixed',top:headerH+8,right:viewPos.right,left:isMobile?8:undefined,width:isMobile?'auto':292,zIndex:330,padding:'14px 16px 8px',animation:'slu 180ms ease',color:DARK}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}><Ruler size={14} strokeWidth={2}/><span style={{fontWeight:600,fontSize:14}}>View &amp; guides</span></div>
+              <button onClick={()=>setShowView(false)} aria-label="Close" className="sbtn" style={{border:'none',borderRadius:7,padding:4,cursor:'pointer',color:MUTED,display:'flex'}}><X size={13}/></button>
+            </div>
+            <Row name="Rotation" value={rotation} min={-180} max={180} onChange={setRotation} format={v=>`${v}°`} hint="Shift + Space + drag on the canvas, or the , and . keys"/>
+            <div style={{display:'flex',gap:4,marginTop:-3,marginBottom:12}}>
+              {[{l:'−15°',f:()=>setRotation(r=>normAngle(r-15))},{l:'Reset',f:()=>setRotation(0)},{l:'+15°',f:()=>setRotation(r=>normAngle(r+15))}].map(b=>(
+                <button key={b.l} onClick={b.f} style={{...ibtn('default'),flex:1,height:28,borderRadius:8,fontWeight:500}}>{b.l}</button>
+              ))}
+            </div>
+            <div style={{height:1,background:LINE,margin:'2px 0 8px'}}/>
+            <Toggle name="Wrap-around tiling" kbd="W" on={wrapMode} onChange={setWrapMode} hint="Paint seamless textures: strokes leaving one edge come back on the other"/>
+            <Toggle name="Perspective guides" kbd="A" on={assist.on} onChange={()=>toggleAssist()}/>
+            {assist.on&&<>
+              <div className="seg" style={{margin:'6px 0'}}>
+                {(['1pt','2pt'] as const).map(m=>(<button key={m} className={`ws-tab${assist.mode===m?' on':''}`} onClick={()=>setAssistMode(m)} style={{flex:1,justifyContent:'center'}}>{m==='1pt'?'1-point':'2-point'}</button>))}
+              </div>
+              <Toggle name="Snap strokes to guides" on={assist.snap} onChange={v=>setAssist({snap:v})}/>
+              <p style={{fontSize:11.5,lineHeight:1.5,color:MUTED,margin:'4px 0 6px'}}>Drag the green handles to move the vanishing points. With snapping on, each stroke locks to the guide closest to its starting direction{assist.mode==='2pt'?', including verticals':''}.</p>
+            </>}
+          </div>
+        )}
 
         {/* ══ SURFACE POPOVER ══════════════════════════════════════════════════ */}
         {showSurface&&(
@@ -2549,6 +2955,7 @@ export default function App() {
                   {PIGMENTS.map((p,idx)=>(<div key={idx} className="pig" onClick={()=>{setColor(p.rgb);setHsl(rgbToHsl(p.rgb[0],p.rgb[1],p.rgb[2]));setActivePig(idx);pushRecent(p.rgb);setIsEyedropper(false);}} title={p.name} style={{width:'100%',aspectRatio:'1',borderRadius:'50%',background:`rgb(${p.rgb.join(',')})`,transform:activePig===idx?'scale(1.2)':'scale(1)',cursor:'pointer',transition:'transform 100ms',border:activePig===idx?`2px solid ${ACCENT}`:`1px solid ${LINE}`}}/>))}
                 </div>
               </div>
+              <button onClick={()=>{setShowMixer(true);setShowColorPanel(false);}} style={{...ibtn('default'),width:'100%',height:32,marginTop:12,borderRadius:9,gap:7,fontWeight:500}}><Palette size={13} strokeWidth={2}/> Mix colours on the palette <kbd style={{...microLabel,marginLeft:'auto'}}>P</kbd></button>
             </div>
           </div>
         )}
@@ -2560,9 +2967,9 @@ export default function App() {
             <div style={{padding:'12px 14px 10px',borderBottom:BORDER,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div style={{fontWeight:600,fontSize:13,letterSpacing:-.3}}>Brush Library</div>
               <div style={{display:'flex',gap:2}}>
-                {(['builtin','imported'] as const).map(tab=>(
+                {(['builtin','mypaint','imported'] as const).map(tab=>(
                   <button key={tab} onClick={()=>setBrushLibTab(tab)} style={{height:24,padding:'0 10px',border:BORDER,borderRadius:7,background:brushLibTab===tab?DARK:WHITE,color:brushLibTab===tab?WHITE:DARK,cursor:'pointer',fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:8,fontWeight:500,letterSpacing:.4,transition:'all 100ms'}}>
-                    {tab==='builtin'?'BUILT-IN':'IMPORTED'}{tab==='imported'&&customBrushes.length>0?` (${customBrushes.length})`:''}
+                    {tab==='builtin'?'BUILT-IN':tab==='mypaint'?'MYPAINT':'IMPORTED'}{tab==='imported'&&customBrushes.length>0?` (${customBrushes.length})`:''}
                   </button>
                 ))}
               </div>
@@ -2580,7 +2987,7 @@ export default function App() {
                       <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7.5,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:6}}>{cat.toUpperCase()}</div>
                       <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                         {brushes.map(({type,label,key})=>{
-                          const isActive=!selectedCustom&&brushType===type&&!eraserMode;
+                          const isActive=!mpActive&&!selectedCustom&&brushType===type&&!eraserMode;
                           return(
                             <button key={type} onClick={()=>{setBrushType(type);setSelectedCustom(null);setIsEyedropper(false);setShowBrushLib(false);setEraserMode(false);}} title={key?`${label} [${key}]`:label}
                               style={{width:68,height:56,border:BORDER,borderRadius:9,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
@@ -2595,6 +3002,7 @@ export default function App() {
                   );
                 });
               })()}
+              {brushLibTab==='mypaint'&&<MyPaintLibrary entries={mpIndex} previews={mpPreviews} activeId={mpActive?.id??null} onSelect={selectMyPaint} error={mpErr}/>}
               {brushLibTab==='imported'&&(
                 customBrushes.length===0?(
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:120,gap:8,opacity:.5}}>
@@ -2624,6 +3032,7 @@ export default function App() {
             </div>
 
             {/* Import section */}
+            {brushLibTab!=='mypaint'&&<>
             <div style={{borderTop:BORDER,padding:'10px 12px',background:CREAM,flexShrink:0}}>
               <div style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7.5,fontWeight:500,color:MUTED,letterSpacing:1,marginBottom:7}}>IMPORT BRUSHES</div>
               <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -2638,7 +3047,7 @@ export default function App() {
               <div style={{marginTop:6,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:7,color:MUTED,letterSpacing:.3,lineHeight:1.5}}>
                 Procreate: .brush or .brushset — Photoshop: .abr (v1/v2 only)
               </div>
-            </div>
+            </div></>}
           </div>
         )}
 
@@ -2648,7 +3057,7 @@ export default function App() {
           {/* Quick-access basic brushes */}
           <div data-tour="brushes" style={{display:'flex',gap:2,flexShrink:0,alignItems:'center'}}>
             {BRUSH_DEFS.filter(b=>b.category==='Basic'&&b.type!=='eraser').map(({type,key})=>{
-              const isActive=!selectedCustom&&brushType===type&&!eraserMode;
+              const isActive=!mpActive&&!selectedCustom&&brushType===type&&!eraserMode;
               return(
                 <button key={type} onClick={()=>{setBrushType(type);setSelectedCustom(null);setIsEyedropper(false);setEraserMode(false);}} title={`${BRUSH_DEFS.find(b=>b.type===type)?.label} [${key}]`}
                   style={{width:isMobile?26:32,height:isMobile?38:46,border:BORDER,borderRadius:8,background:isActive?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,transition:'all 110ms cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
@@ -2665,7 +3074,7 @@ export default function App() {
           <button onClick={()=>{setSmudgeMode(p=>!p);setEraserMode(false);}} title="Smudge [S]" style={{...ibtn('default',smudgeMode),width:isMobile?26:34,height:isMobile?38:46,borderRadius:9,flexShrink:0,flexDirection:'column',gap:3,fontSize:9,fontFamily:"'Geist Mono',ui-monospace,monospace",letterSpacing:.3}}>
             <Blend size={isMobile?11:13} strokeWidth={2}/>
           </button>
-          {!isMobile&&<button ref={brushAdvBtnRef} onClick={()=>{setShowBrushAdv(p=>!p);setShowSurface(false);setShowBrushLib(false);setShowColorPanel(false);}} style={{...ibtn('default',showBrushAdv),width:28,height:34,borderRadius:8,flexShrink:0}}>
+          {!isMobile&&<button ref={brushAdvBtnRef} aria-label="Brush settings" title="Brush settings: pressure, impasto, smudge" onClick={()=>{setShowBrushAdv(p=>!p);setShowSurface(false);setShowBrushLib(false);setShowColorPanel(false);}} style={{...ibtn('default',showBrushAdv),width:28,height:34,borderRadius:8,flexShrink:0}}>
             <Settings2 size={11} strokeWidth={2}/>
           </button>}
 
@@ -2905,7 +3314,7 @@ export default function App() {
                 <button onClick={()=>setShowHelp(false)} style={{...ibtn(),width:32,height:32,borderRadius:8}}><X size={13} strokeWidth={2}/></button>
               </div>
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?'4px 10px':'5px 20px'}}>
-                {[['1–5','Select brushes'],['E','Eraser mode'],['S','Toggle smudge'],['C','Color panel'],['[ / ]','Brush size ±5'],['Alt+E','Eyedropper'],['Right-click','Pop-up palette'],['T','Transform tool'],['L','Lasso select'],['Ctrl+Z','Undo'],['Ctrl+Shift+Z','Redo'],['Ctrl+S','Save PNG'],['Scroll','Zoom'],['Space+Drag','Pan canvas'],['0','Fit to screen'],['F','Flip horizontal'],['V','Flip vertical'],['G','Gallery'],['+ / -','Zoom in/out'],['?','Show shortcuts'],['Esc','Close all panels']].map(([k,d])=>(
+                {[['1–5','Select brushes'],['E','Eraser mode'],['S','Toggle smudge'],['C','Color panel'],['P','Mixing palette'],['[ / ]','Brush size ±5'],['Alt+E','Eyedropper'],['Right-click','Pop-up palette'],['T','Transform tool'],['L','Lasso select'],['Ctrl+Z','Undo'],['Ctrl+Shift+Z','Redo'],['Ctrl+S','Save PNG'],['Scroll','Zoom'],['Space+Drag','Pan canvas'],['Shift+Space+Drag','Rotate view'],['0','Fit to screen'],[', / .','Rotate view'],['R','Reset rotation'],['W','Wrap-around'],['A','Perspective guides'],['F','Flip horizontal'],['V','Flip vertical'],['G','Gallery'],['+ / -','Zoom in/out'],['?','Show shortcuts'],['Esc','Close all panels']].map(([k,d])=>(
                   <div key={k} style={{display:'flex',alignItems:'center',gap:9,padding:'6px 0',borderBottom:`1px solid rgba(0,0,0,.06)`}}>
                     <kbd style={{fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:9,fontWeight:500,color:DARK,background:SAND,border:BORDER,borderBottomWidth:2,borderRadius:7,padding:'3px 8px',minWidth:70,textAlign:'center',flexShrink:0}}>{k}</kbd>
                     <span style={{fontSize:12,color:DARK}}>{d}</span>
@@ -3091,6 +3500,7 @@ export default function App() {
               {icon:<LayoutGrid size={14}/>,label:'Gallery',cb:()=>{setShowGallery(p=>!p);setMobileDrawer(false);}},
               {icon:<Music2 size={14}/>,label:'Music',cb:()=>{setShowMusic(p=>!p);setMobileDrawer(false);}},
               {icon:<ImageIcon size={14}/>,label:'Reference',cb:()=>{setShowRef(p=>!p);setMobileDrawer(false);}},
+              {icon:<Palette size={14}/>,label:'Mixing palette',cb:()=>{setShowMixer(p=>!p);setMobileDrawer(false);}},
             ].map((item,i)=>(
               <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:(item as any).active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms',position:'relative'}}>
                 {item.icon}<span>{item.label}</span>
@@ -3103,6 +3513,7 @@ export default function App() {
               {icon:<FlipHIcon size={14}/>,label:`Flip H${flipH?' (ON)':''}`,active:flipH,cb:()=>setFlipH(p=>!p)},
               {icon:<FlipVIcon size={14}/>,label:`Flip V${flipV?' (ON)':''}`,active:flipV,cb:()=>setFlipV(p=>!p)},
               {icon:theme==='dark'?<Sun size={14}/>:<Moon size={14}/>,label:theme==='dark'?'Light theme':'Dark theme',active:false,cb:toggleTheme},
+              {icon:<Ruler size={14}/>,label:'View & guides',active:rotation!==0||wrapMode||assist.on,cb:()=>{setMobileDrawer(false);setViewPos({right:8});setShowView(true);}},
             ].map((item,i)=>(
               <button key={i} onClick={item.cb} style={{width:'100%',height:38,border:BORDER,borderRadius:9,background:item.active?LIME:WHITE,color:DARK,cursor:'pointer',display:'flex',alignItems:'center',gap:10,padding:'0 12px',fontFamily:"'Geist',system-ui,sans-serif",fontSize:12,fontWeight:600,transition:'all 100ms'}}>
                 {item.icon}<span>{item.label}</span>
@@ -3307,7 +3718,7 @@ export default function App() {
                 <button key={i} className="pal-dot" aria-label={`Colour rgb ${c.join(' ')}`} onClick={()=>{applyColor(c);setPopPal(null);}}
                   style={{left:`calc(50% + ${Math.cos(a)*R}px)`,top:`calc(50% + ${Math.sin(a)*R}px)`,width:sel?30:26,height:sel?30:26,borderRadius:'50%',background:`rgb(${c.join(',')})`,border:sel?`3px solid ${ACCENT}`:BORDER,boxShadow:sel?`0 0 0 2px ${DARK}`:'none',animationDelay:`${i*14}ms`,padding:0}}/>
               );})}
-              {brushes.map((b,i)=>{const a=i/brushes.length*Math.PI*2-Math.PI/2+Math.PI/brushes.length;const r=R*.52;const sel=!selectedCustom&&!eraserMode&&brushType===b.type;return(
+              {brushes.map((b,i)=>{const a=i/brushes.length*Math.PI*2-Math.PI/2+Math.PI/brushes.length;const r=R*.52;const sel=!mpActive&&!selectedCustom&&!eraserMode&&brushType===b.type;return(
                 <button key={b.type} className="pal-dot" title={b.label} aria-label={b.label} onClick={()=>{setBrushType(b.type);setSelectedCustom(null);setEraserMode(false);setPopPal(null);}}
                   style={{left:`calc(50% + ${Math.cos(a)*r}px)`,top:`calc(50% + ${Math.sin(a)*r}px)`,width:30,height:30,borderRadius:9,background:sel?LIME:WHITE,border:BORDER,color:DARK,display:'flex',alignItems:'center',justifyContent:'center',animationDelay:`${80+i*20}ms`,padding:0}}>
                   <BrushIcon type={b.type} size={14}/>
