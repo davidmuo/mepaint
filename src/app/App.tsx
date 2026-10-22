@@ -4,7 +4,7 @@ import { pigmentMix, smudgeMix } from './components/pigment-mix';
 import { CREAM, WHITE, DARK, LIME, PINK, ACCENT, ACCENT_INK, ON_ACCENT, MUTED, SAND, LINE, LINE_STRONG, HERO, BORDER, BR, SHADOW, SHADOW_SM } from './components/tokens';
 import { Tour, type TourStep } from './components/Tour';
 import { ColorPicker } from './components/ColorPicker';
-import { MixDemo, MIX_COLORS } from './components/MixDemo';
+import { MixDemo } from './components/MixDemo';
 import { Toaster, toast } from 'sonner';
 import { curveLUT, loadDynamics, saveDynamics, type Dynamics } from './engine/dynamics';
 import { samplePatch, advancePatch, patchIndex, newSmudgeState, loadSmudge, saveSmudge, type SmudgeConfig, type SmudgeState } from './engine/smudge';
@@ -3576,31 +3576,16 @@ export default function App() {
             {/* ── Hero: what makes mepaint different */}
             {!isMobile&&(
               <div style={{width:380,flexShrink:0,background:HERO,color:'#fff',padding:'34px 34px 30px',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',inset:0,backgroundImage:`radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1px)`,backgroundSize:'22px 22px',pointerEvents:'none'}}/>
-                <div style={{position:'relative',display:'flex',alignItems:'baseline',userSelect:'none'}}>
+                <div style={{display:'flex',alignItems:'baseline',userSelect:'none'}}>
                   <span style={{fontSize:24,fontWeight:700,letterSpacing:-.8,lineHeight:1}}>me</span>
                   <span style={{fontSize:24,fontWeight:400,color:'#A9A294',letterSpacing:-.5,lineHeight:1}}>paint</span>
                 </div>
-                <div style={{position:'relative',margin:'38px 0 22px'}}>
+                {/* Just the idea: the mix, and one line saying it */}
+                <div style={{marginTop:'auto'}}>
                   <MixDemo size={176} stroke="#fff"/>
-                  <div style={{display:'flex',alignItems:'center',gap:7,marginTop:14,fontFamily:"'Geist Mono',ui-monospace,monospace",fontSize:10,fontWeight:500,letterSpacing:.4,color:'rgba(255,255,255,.55)'}}>
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.blue}}/>BLUE +
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.yellow}}/>YELLOW =
-                    <span style={{width:11,height:11,borderRadius:'50%',background:MIX_COLORS.mix}}/><span style={{color:'#6FDDB2'}}>GREEN</span>
-                  </div>
-                </div>
-                <h1 style={{position:'relative',fontSize:34,fontWeight:600,letterSpacing:-1.3,lineHeight:1.05,marginBottom:12}}>
-                  Paint that mixes like the <span style={{color:'#6FDDB2'}}>real thing.</span>
-                </h1>
-                <p style={{position:'relative',fontSize:13,lineHeight:1.55,color:'rgba(255,255,255,.6)',marginBottom:22,fontWeight:400}}>
-                  Colours blend like physical pigment, not screen pixels, so your glazes and mixes come out the way they would on paper.
-                </p>
-                <div style={{position:'relative',display:'flex',flexDirection:'column',gap:9,marginTop:'auto'}}>
-                  {['14 natural brushes + Procreate import','Layers, blend modes & textured papers','Frame-by-frame animation','Paint together in real time'].map(f=>(
-                    <div key={f} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,fontWeight:500,color:'rgba(255,255,255,.86)'}}>
-                      <span style={{width:18,height:18,borderRadius:'50%',background:'rgba(111,221,178,.16)',color:'#6FDDB2',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Check size={10} strokeWidth={3.2}/></span>{f}
-                    </div>
-                  ))}
+                  <h1 style={{fontSize:34,fontWeight:600,letterSpacing:-1.3,lineHeight:1.05,marginTop:28}}>
+                    Paint that mixes like the <span style={{color:'#6FDDB2'}}>real thing.</span>
+                  </h1>
                 </div>
               </div>
             )}
